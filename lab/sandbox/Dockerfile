@@ -5,7 +5,16 @@ FROM python:3.12-slim
 # Hardened per §7: non-root, no sudo, no docker socket, caps dropped in compose.
 # Host-escape flaws (privileged, socket mounts) are deliberately NOT here (§4);
 # the config checker flags those statically.
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* \
+# The Acquire options work around "Hash Sum mismatch" failures under BuildKit on
+# Docker Desktop: apt downloads a file of the right size but wrong content, so
+# the build fails while the same install succeeds under `docker run`. Disabling
+# HTTP pipelining and caching is the standard mitigation; harmless elsewhere.
+RUN apt-get -o Acquire::http::Pipeline-Depth=0 \
+            -o Acquire::http::No-Cache=true \
+            -o Acquire::BrokenProxy=true \
+            -o Acquire::Retries=3 update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/* \
  && useradd -m -u 1000 -s /bin/bash agent
 
 # The agent harness and only its two dependencies (§6).
