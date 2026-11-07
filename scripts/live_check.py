@@ -46,23 +46,6 @@ def _admin() -> httpx.AsyncClient:
     )
 
 
-def _list_models(key_env: str, filter_text: str = ""):
-    """Model ids this key can use. Runs on the control plane, where the real key
-    already lives, so it talks to the provider directly rather than the gateway
-    (which exposes only /v1/chat/completions)."""
-    base = gw.UPSTREAMS.get(PROVIDER, {}).get("base_url", "")
-    try:
-        with httpx.Client(timeout=30) as c:
-            r = c.get(base + "/models",
-                      headers={"Authorization": "Bearer %s" % os.environ[key_env]})
-        r.raise_for_status()
-        ids = sorted(m.get("id", "") for m in r.json().get("data", []))
-    except Exception as exc:
-        return ["(could not list models: %s)" % exc]
-    hits = [i for i in ids if filter_text in i] if filter_text else ids
-    return hits[:20] or ids[:20] or ["(none returned)"]
-
-
 def main() -> int:
     key_env = gw.UPSTREAMS.get(PROVIDER, {}).get("key_env", "NVIDIA_API_KEY")
     if not os.environ.get(key_env):
@@ -120,12 +103,17 @@ def main() -> int:
             failures.append("live call returned %d: %s" % (r.status_code, r.text[:300]))
             print("%s live Nemotron call (%d) %s" % (BAD, r.status_code, r.text[:200]))
             if r.status_code in (404, 410):
-                # A model id goes end-of-life without warning, so turn a dead end
-                # into the list of ids this key can actually use right now.
-                print("       the model id is dead; asking the provider what is available...")
-                for name in _list_models(key_env, "nemotron"):
-                    print("         %s" % name)
-                print("       re-run with: export ARES_MODEL=<one of the above>")
+                # 410 = the id reached end of life. 404 "Function ... not found
+                # for account" = the id exists in the catalog but your key may
+                # not invoke it. Listing /v1/models does not distinguish these,
+                # because it returns the whole catalog either way.
+                if r.status_code == 410:
+                    print("       this model id reached end of life.")
+                else:
+                    print("       this model id is not callable with your key"
+                          " (it may still be listed in the catalog).")
+                print("       Find one that works:"
+                      "  ./.venv/bin/python scripts/pick_model.py")
         else:
             payload = r.json()
             reply = payload["choices"][0]["message"].get("content", "")
