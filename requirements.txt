@@ -1,0 +1,6 @@
+# Control plane (host side). The lab containers use only the stdlib.
+pydantic>=2.10
+docker>=7.1
+numpy>=2.0
+scipy>=1.14
+cryptography>=44
