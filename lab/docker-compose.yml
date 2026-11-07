@@ -1,9 +1,12 @@
 name: ares-lab
 
-# One sealed network. The LLM gateway (other lane) would be the only dual-homed
-# service; in this sandbox-lane build nothing has a route out, which is the strongest wall.
+# Two sealed networks. The proxy is the ONLY thing on both, so the sandbox can reach
+# the fake services only through it (§3) — a direct curl --noproxy can't route. Both are
+# internal: true, so nothing has a route out either.
 networks:
-  labnet:
+  labnet:        # fake services + proxy's inside leg
+    internal: true
+  sandboxnet:    # sandbox + proxy's agent-facing leg
     internal: true
 
 services:
@@ -38,13 +41,14 @@ services:
       - ./runs:/events
     depends_on: [fake]
     networks:
-      labnet:
-        aliases: [proxy.lab]
+      labnet: {}                 # reach the fake-service aliases
+      sandboxnet:
+        aliases: [proxy.lab]      # the sandbox's only reachable host
 
   sandbox:
     build: ./sandbox
     depends_on: [proxy]
-    networks: [labnet]
+    networks: [sandboxnet]        # NOT on labnet: the proxy is the only way to the services
     # hardened: no privileged, no docker.sock, no host mounts
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
