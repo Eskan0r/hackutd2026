@@ -44,7 +44,9 @@ def handler(request: httpx.Request) -> httpx.Response:
     if model == NOT_FOR_ACCOUNT:
         return httpx.Response(404, json={
             "status": 404, "title": "Not Found",
-            "detail": "Function 'ac74040f': Not found for account 'IT5Szof7'"})
+            # Shape of the real refusal, with the ids replaced: an account
+            # identifier does not belong in the repo.
+            "detail": "Function '<function-uuid>': Not found for account '<account-id>'"})
     if model == GONE:
         return httpx.Response(410, json={
             "status": 410, "title": "Gone",
