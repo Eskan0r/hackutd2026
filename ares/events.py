@@ -1,147 +1,206 @@
-"""Append-only, hash-chained JSONL event log (ARCHITECTURE.md D8, section 9.2).
+"""Append-only, hash-chained JSONL events (ARCHITECTURE.md D8, section 9.2).
 
-The lab has no network path to the control plane: producers inside `labnet`
-append lines to a shared volume and the defender tails them. The chain makes the
-log tamper-evident -- editing or deleting a line breaks every `prev_sha256`
-after it.
+One file per writer under $EVENTS_DIR, named by $EVENT_SOURCE. Each line carries
+prev_sha256 = sha256 of the previous line's bytes, so editing or deleting a line
+breaks every link after it and the defender can tell.
+
+STDLIB ONLY, on purpose. The lab services run on bare `python:3.12-slim` with no
+pip install (see lab/docker-compose.yml) and import this module from /src, so a
+pydantic import here would break every fake service. The pydantic `Event` model
+in ares/contracts.py is for the control plane, which validates lines on read.
+
+The per-event `source` field is not the filename: lab/services/fake.py writes
+one `fake.jsonl` while emitting source="answer-key", "pkg-proxy" and so on.
 
 Who may write: the Leakbox policy proxy, the fake services, the DNS sinkhole and
 the LLM gateway. The agent sandbox must NOT have the event volume mounted
-(ARCHITECTURE.md section 3), so nothing the agent runs can forge, truncate or
-suppress evidence.
-
-Each producer writes its own file (`<source>.jsonl`) under the run's events
-directory. Per-file chains keep writers independent while staying append-only;
-the defender merges by timestamp. `flock` makes concurrent appends from separate
-processes safe.
+(section 3), so nothing the agent runs can forge, truncate or suppress evidence.
 """
-
-from __future__ import annotations
 
 import hashlib
 import json
 import os
-from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Union
+import threading
+from datetime import datetime, timezone
 
-from ares.contracts import Event
-
-try:  # POSIX only; the lab is Linux containers, but keep imports importable on any host
+try:  # POSIX only; the lab is Linux containers, but stay importable anywhere
     import fcntl
 except ImportError:  # pragma: no cover
-    fcntl = None  # type: ignore[assignment]
+    fcntl = None
 
 GENESIS = "0" * 64
+_ZERO = GENESIS  # back-compat alias
+
+# Every line carries the full section 9.2 shape, so consumers never special-case
+# a missing key. Values a caller does not pass get these defaults.
+_DEFAULTS = {
+    "bait_id": None,
+    "flaw": None,
+    "dst_host": None,
+    "dst_port": None,
+    "method": None,
+    "path": None,
+    "token_match": False,
+    "detail": {},
+}
 
 
-def canonical_json(obj: Dict[str, Any]) -> bytes:
-    """Sorted keys, no whitespace -- the same form the report signer uses."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+def _now_iso() -> str:
+    return (
+        datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    )
 
 
-def sha256_hex(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _line_hash(line: Union[str, bytes]) -> str:
+def _hash_line(line) -> str:
+    """sha256 of one line's bytes, excluding the trailing newline."""
     if isinstance(line, str):
         line = line.encode("utf-8")
-    return sha256_hex(line.strip())
+    return hashlib.sha256(line.rstrip(b"\r\n")).hexdigest()
+
+
+def serialize(event: dict) -> str:
+    """One event as its on-disk line.
+
+    `sort_keys=True` with json's default separators, which is what lab/selftest.sh
+    greps for (`"bait_id": "ak-01"`, with the space). Deliberately NOT the
+    no-whitespace canonical form -- that belongs to the signed report (section
+    9.6), and the chain hashes raw line bytes, so spacing is irrelevant to it.
+    """
+    return json.dumps(event, sort_keys=True)
 
 
 class EventWriter:
-    """Appends events to one JSONL file, chaining each to the previous line.
+    """Appends to one JSONL file, chaining each line to the previous one.
 
-    `prev_sha256` is assigned here rather than by the caller so a producer cannot
-    accidentally (or deliberately) break the chain.
+    `prev_sha256` is assigned here, never by the caller, so a producer cannot
+    break the chain by accident.
     """
 
-    def __init__(self, events_dir: Union[str, Path], source: str) -> None:
-        self.source = source
-        self.dir = Path(events_dir)
-        self.dir.mkdir(parents=True, exist_ok=True)
-        self.path = self.dir / ("%s.jsonl" % source)
-        self._last: Optional[str] = None   # hash of the last line we know about
-        self._size: int = -1               # file size when we learned that hash
+    def __init__(self, events_dir=None, source=None):
+        self.dir = str(events_dir or os.environ.get("EVENTS_DIR", "/events"))
+        self.file_source = str(source or os.environ.get("EVENT_SOURCE", "lab"))
+        self.path = os.path.join(self.dir, "%s.jsonl" % self.file_source)
+        self._lock = threading.Lock()  # the lab services are ThreadingHTTPServer
+        self._last = None              # hash of the last line we wrote
+        self._size = -1                # file size when we learned that hash
 
     def _read_tail_hash(self) -> str:
-        """Hash of the last line actually on disk."""
-        tail = GENESIS
-        if self.path.exists():
-            with self.path.open("rb") as fh:
-                last = b""
-                for raw in fh:
-                    if raw.strip():
-                        last = raw
-                if last:
-                    tail = _line_hash(last)
-        return tail
+        try:
+            with open(self.path, "rb") as fh:
+                for line in reversed(fh.read().splitlines()):
+                    if line.strip():
+                        return _hash_line(line)
+        except FileNotFoundError:
+            pass
+        return GENESIS
 
-    def emit(self, event: Event) -> Event:
-        """Chain, append and fsync one event. Returns the stored event."""
-        if event.source != self.source:
-            raise ValueError(
-                "writer for %r cannot emit an event from %r" % (self.source, event.source)
-            )
-        with self.path.open("ab") as fh:
-            if fcntl is not None:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-            try:
-                fh.seek(0, os.SEEK_END)
-                size = fh.tell()
-                if size == 0:
-                    prev = GENESIS
-                elif self._last is None or size != self._size:
-                    # The file grew since we last wrote, so another writer (or
-                    # another process) owns the current tail. Chaining onto our
-                    # cached hash here would break the chain, and a broken chain
-                    # reads as tampering -- re-read instead.
-                    prev = self._read_tail_hash()
-                else:
-                    prev = self._last
-                event = event.model_copy(update={"prev_sha256": prev})
-                line = canonical_json(event.model_dump(mode="json"))
-                fh.write(line + b"\n")
-                fh.flush()
-                os.fsync(fh.fileno())
-                self._last = _line_hash(line)
-                self._size = fh.tell()
-            finally:
+    def emit(self, source, kind, severity, **fields) -> dict:
+        """Write one section 9.2 event. Severity is fixed by the caller (D1)."""
+        event = {
+            "ts": fields.pop("ts", None) or _now_iso(),
+            "run_id": fields.pop("run_id", None) or os.environ.get("RUN_ID", "r_local"),
+            "trial": fields.pop("trial", None),
+            "variant": fields.pop("variant", None) or os.environ.get("VARIANT", "A"),
+            "source": source,
+            "kind": kind,
+            "severity": severity,
+        }
+        if event["trial"] is None:
+            event["trial"] = int(os.environ.get("TRIAL", "0"))
+        for key, default in _DEFAULTS.items():
+            event[key] = fields.pop(key, default)
+        if fields:
+            # Unknown keys go under detail rather than top level, so a line never
+            # drifts from the frozen section 9.2 shape -- and nothing is dropped.
+            event["detail"] = dict(event["detail"] or {}, **fields)
+
+        os.makedirs(self.dir, exist_ok=True)
+        with self._lock:
+            with open(self.path, "ab") as fh:
                 if fcntl is not None:
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                try:
+                    fh.seek(0, os.SEEK_END)
+                    size = fh.tell()
+                    if size == 0:
+                        prev = GENESIS
+                    elif self._last is None or size != self._size:
+                        # The file grew since we last wrote, so another writer or
+                        # process owns the tail. Chaining onto our cached hash
+                        # would break the chain -- and a broken chain reads as
+                        # tampering, so re-read instead of guessing.
+                        prev = self._read_tail_hash()
+                    else:
+                        prev = self._last
+                    event["prev_sha256"] = prev
+                    line = serialize(event)
+                    fh.write(line.encode("utf-8") + b"\n")
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                    self._last = _hash_line(line)
+                    self._size = fh.tell()
+                finally:
+                    if fcntl is not None:
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
         return event
 
 
-def read_events(path: Union[str, Path]) -> Iterator[Event]:
-    p = Path(path)
-    if not p.exists():
+_WRITERS = {}
+_WRITERS_LOCK = threading.Lock()
+
+
+def writer_for(events_dir=None, source=None) -> EventWriter:
+    """Process-wide writer per (dir, file), so the tail cache is actually shared."""
+    key = (
+        str(events_dir or os.environ.get("EVENTS_DIR", "/events")),
+        str(source or os.environ.get("EVENT_SOURCE", "lab")),
+    )
+    with _WRITERS_LOCK:
+        if key not in _WRITERS:
+            _WRITERS[key] = EventWriter(*key)
+        return _WRITERS[key]
+
+
+def emit(source, kind, severity, **fields) -> dict:
+    """Write one event to $EVENTS_DIR/$EVENT_SOURCE.jsonl. What the lab calls."""
+    return writer_for().emit(source, kind, severity, **fields)
+
+
+def read_events(path):
+    """Yield each event on disk as a plain dict."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                if raw.strip():
+                    yield json.loads(raw)
+    except FileNotFoundError:
         return
-    with p.open("r", encoding="utf-8") as fh:
-        for raw in fh:
-            if raw.strip():
-                yield Event.model_validate_json(raw)
 
 
-def verify_chain(path: Union[str, Path]) -> List[str]:
-    """Return a list of problems. Empty list means the chain is intact."""
-    p = Path(path)
-    problems: List[str] = []
-    if not p.exists():
-        return ["%s: missing" % p]
+def verify_chain(path):
+    """Return a list of problems. Empty list means the chain is intact.
+
+    Note what this cannot see: dropping lines from the END leaves a valid prefix.
+    The scorer catches that by comparing the tail hash against the signed report.
+    """
+    problems = []
+    if not os.path.exists(path):
+        return ["%s: missing" % path]
+    name = os.path.basename(path)
     prev = GENESIS
-    with p.open("rb") as fh:
+    with open(path, "rb") as fh:
         for n, raw in enumerate(fh, start=1):
             if not raw.strip():
                 continue
             try:
-                event = Event.model_validate_json(raw)
-            except Exception as exc:  # malformed line breaks the audit trail
-                problems.append("%s:%d: unparseable (%s)" % (p.name, n, exc))
+                event = json.loads(raw)
+            except ValueError as exc:
+                problems.append("%s:%d: unparseable (%s)" % (name, n, exc))
                 return problems
-            if event.prev_sha256 != prev:
+            if event.get("prev_sha256") != prev:
                 problems.append(
                     "%s:%d: prev_sha256 %s, expected %s"
-                    % (p.name, n, event.prev_sha256, prev)
+                    % (name, n, event.get("prev_sha256"), prev)
                 )
-            prev = _line_hash(raw)
+            prev = _hash_line(raw)
     return problems

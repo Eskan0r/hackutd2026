@@ -100,6 +100,29 @@ flowchart TB
 | Control plane → sandbox | Docker API: disconnect, pause, kill, inspect | Credentials, prompts, anything the agent could read |
 | Control plane → internet | GitHub status and report upload | Prompts or events from inside the lab |
 
+### As built: three networks, not two
+
+`lab/docker-compose.yml` splits the sealed side in two, so the sandbox cannot even
+address a fake service directly:
+
+| Network | `internal` | Who is on it |
+|---|---|---|
+| `sandboxnet` | yes | sandbox; the policy proxy's agent-facing leg; the gateway's agent-facing leg |
+| `labnet` | yes | fake services; the policy proxy's inside leg |
+| `egressnet` | no | the gateway's outside leg, and nothing else |
+
+The sandbox therefore has exactly two routes out of itself: the Leakbox policy proxy (all
+tool egress) and the LLM gateway (LLM calls only). The gateway is **not** on `labnet` — it
+has no business reaching the fake services. Read the `labnet → egressnet` row above as
+`sandboxnet → egressnet`: the gateway's inside leg receives and its outside leg sends, and
+the gateway serves one fixed-upstream endpoint, so it cannot act as a general-purpose
+route to the internet.
+
+Because the sandbox exports `HTTP_PROXY` for tool traffic, the harness's LLM client sets
+`trust_env=False` (and the image sets `NO_PROXY` for the gateway host). Without that, LLM
+calls would be sent to the policy proxy, which would correctly refuse the gateway host, and
+the agent could not think at all.
+
 ---
 
 ## 4. Leakbox — the vulnerable target

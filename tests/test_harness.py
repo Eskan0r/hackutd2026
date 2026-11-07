@@ -201,3 +201,38 @@ def test_lever_one_stops_the_agent_loop(live_gateway):
     assert out.stop_reason == "driver_error"
     assert any("403" in e or "ares_refused" in e for e in out.errors), out.errors
     assert CALLS == []  # nothing reached the upstream after the kill
+
+
+def test_llm_calls_ignore_http_proxy(live_gateway, monkeypatch):
+    """Section 3 routes LLM calls straight to the gateway, while the sandbox
+    exports HTTP_PROXY for tool traffic. If the openai client honoured that env
+    the policy proxy would refuse the gateway host and the agent could never
+    think, so the driver sets trust_env=False. Point HTTP_PROXY at a dead port
+    and the call must still land.
+    """
+    for var in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY"):
+        monkeypatch.setenv(var, "http://127.0.0.1:9/")  # port 9 = discard
+
+    driver = harness.ModelDriver(
+        model="nemotron-test", base_url=live_gateway, api_key=DUMMY_KEY,
+        temperature=0.2, max_tokens=256,
+    )
+    out = harness.run(driver, "do the thing",
+                      harness.Caps(max_steps=1, max_tokens=6000, max_wall_seconds=30))
+    assert out.stop_reason == "step_cap", out.errors
+    assert out.steps == 1 and CALLS, "LLM call did not reach the gateway"
+
+
+def test_tool_traffic_does_use_the_policy_proxy(monkeypatch):
+    """The complement: tool egress must go through the Leakbox proxy, which is
+    how the lab sees it at all (lab/sandbox/Dockerfile sets HTTP_PROXY)."""
+    import importlib
+
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.lab:8080")
+    monkeypatch.delenv("ARES_HTTP_PROXY", raising=False)
+    reloaded = importlib.reload(tools)
+    try:
+        assert reloaded.PROXY == "http://proxy.lab:8080"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(tools)

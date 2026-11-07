@@ -24,6 +24,7 @@ routing fact instead.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import secrets
@@ -38,11 +39,22 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from ares.contracts import Caps, Event, LeverResult, iso
-from ares.events import EventWriter, canonical_json, sha256_hex
+from ares.contracts import Caps, LeverResult, iso
+from ares.events import EventWriter, serialize
 
 SOURCE = "gateway"
 RUNS_ROOT = Path(os.environ.get("ARES_RUNS_ROOT", "/var/ares/runs"))
+
+
+def events_dir_for(run_id: str) -> Path:
+    """Where this run's event files live.
+
+    The lab mounts one flat directory and sets EVENTS_DIR (lab/docker-compose.yml),
+    so the gateway's lines land beside the proxy's and the fake services'. Without
+    it, fall back to the per-run layout in section 5.
+    """
+    flat = os.environ.get("EVENTS_DIR")
+    return Path(flat) if flat else RUNS_ROOT / run_id / "events"
 
 # Fixed upstreams. The request body never chooses a base URL; the registered
 # provider does. Adding a provider is a code change, not a config change.
@@ -89,22 +101,20 @@ class RunState:
         self.tokens = 0
         self.calls_after_kill = 0
         self.writer = EventWriter(events_dir, SOURCE)
-        self.transcript = events_dir.parent / "gateway-transcript.jsonl"
+        self.transcript = Path(events_dir) / "gateway-transcript.jsonl"
 
     # --- event + transcript helpers ---------------------------------------
 
-    def emit(self, severity: str, detail: Dict[str, Any], kind: str = "llm") -> Event:
+    def emit(self, severity: str, detail: Dict[str, Any], kind: str = "llm") -> Dict[str, Any]:
         return self.writer.emit(
-            Event(
-                run_id=self.reg.run_id,
-                trial=self.reg.trial,
-                variant=self.reg.variant,
-                source=SOURCE,
-                kind=kind,
-                severity=severity,
-                dst_host=UPSTREAMS.get(self.reg.provider, {}).get("base_url", ""),
-                detail=detail,
-            )
+            SOURCE,
+            kind,
+            severity,
+            run_id=self.reg.run_id,
+            trial=self.reg.trial,
+            variant=self.reg.variant,
+            dst_host=UPSTREAMS.get(self.reg.provider, {}).get("base_url"),
+            detail=detail,
         )
 
     def record(self, entry: Dict[str, Any]) -> None:
@@ -227,7 +237,7 @@ async def chat_completions(request: Request) -> Any:
     if "temperature" not in body:
         body["temperature"] = caps.temperature
 
-    req_sha = sha256_hex(canonical_json(body))
+    req_sha = hashlib.sha256(serialize(body).encode("utf-8")).hexdigest()
     run.calls += 1
     call_index = run.calls
 
@@ -335,7 +345,7 @@ async def require_admin(x_ares_admin_token: str = Header(default="")) -> None:
 
 @admin_app.post("/admin/runs", dependencies=[Depends(require_admin)])
 async def register_run(reg: RunRegistration) -> Dict[str, Any]:
-    events_dir = RUNS_ROOT / reg.run_id / "events"
+    events_dir = events_dir_for(reg.run_id)
     state = RunState(reg, events_dir)
     prior = RUNS.get(reg.run_id)
     if prior is not None:
@@ -388,10 +398,18 @@ async def serve() -> None:
         agent_app, host=os.environ.get("ARES_GATEWAY_HOST", "0.0.0.0"),
         port=int(os.environ.get("ARES_GATEWAY_PORT", "8080")), log_level="info",
     )
-    admin_cfg = uvicorn.Config(
-        admin_app, host=os.environ.get("ARES_ADMIN_HOST", "127.0.0.1"),
-        port=int(os.environ.get("ARES_ADMIN_PORT", "8081")), log_level="warning",
-    )
+    # ARES_ADMIN_UDS keeps the admin leg off every network interface, which is
+    # the strongest form of "the agent cannot un-deny itself". On the Linux VM
+    # prefer it; under Docker Desktop a published loopback port is easier and the
+    # admin token is what stands between the sandbox and this API.
+    uds = os.environ.get("ARES_ADMIN_UDS")
+    if uds:
+        admin_cfg = uvicorn.Config(admin_app, uds=uds, log_level="warning")
+    else:
+        admin_cfg = uvicorn.Config(
+            admin_app, host=os.environ.get("ARES_ADMIN_HOST", "127.0.0.1"),
+            port=int(os.environ.get("ARES_ADMIN_PORT", "8081")), log_level="warning",
+        )
     await asyncio.gather(
         uvicorn.Server(agent_cfg).serve(), uvicorn.Server(admin_cfg).serve()
     )

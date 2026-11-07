@@ -99,13 +99,21 @@ class ModelDriver:
 
     def __init__(self, model: str, base_url: str, api_key: str, temperature: float,
                  max_tokens: int) -> None:
+        import httpx
         from openai import OpenAI
 
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        # trust_env=False is load-bearing. The sandbox exports HTTP_PROXY so that
+        # tool traffic goes through the Leakbox policy proxy, but section 3 routes
+        # LLM calls straight to the gateway. Without this the openai client would
+        # pick HTTP_PROXY up from the environment and the proxy would (correctly)
+        # refuse the gateway host, so the agent could never think at all.
+        http_client = httpx.Client(trust_env=False, timeout=90.0)
         # The dummy key. The real credential exists only in the gateway's env.
-        self.client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0)
+        self.client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0,
+                             http_client=http_client)
 
     def next_action(self, transcript: List[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[str], int]:
         resp = self.client.chat.completions.create(

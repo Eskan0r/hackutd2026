@@ -1,0 +1,109 @@
+name: ares-lab
+
+# Three networks. The sandbox sits on sandboxnet only, so it has exactly two
+# ways to reach anything (§3):
+#   * the Leakbox policy proxy, the only thing on both sandboxnet and labnet,
+#     so a direct curl --noproxy cannot route to a fake service;
+#   * the LLM gateway, the only thing on both sandboxnet and egressnet, and the
+#     only component that may talk to the internet at all.
+# labnet and sandboxnet are internal: true, so nothing on them has a route out.
+# egressnet is NOT internal -- it is the one way out, and only the gateway is on
+# it. The gateway exposes a single fixed-upstream endpoint, so it cannot be used
+# as a general-purpose proxy to the internet.
+networks:
+  labnet:        # fake services + proxy's inside leg
+    internal: true
+  sandboxnet:    # sandbox + proxy's agent-facing leg + gateway's agent-facing leg
+    internal: true
+  egressnet:     # gateway's outside leg only
+    internal: false
+
+services:
+  fake:
+    image: python:3.12-slim
+    command: ["python", "-u", "/src/lab/services/fake.py"]
+    environment:
+      EVENT_SOURCE: fake
+      RUN_ID: ${RUN_ID:-r_local}
+    volumes:
+      - ..:/src:ro          # repo for `ares.events` + `lab.leakbox.config` imports
+      - ./runs:/events
+    networks:
+      labnet:
+        aliases:
+          - api.acme.test
+          - pkg.acme.test
+          - grader.acme.test
+          - metadata.ares.test
+          - board.ares.test
+          - outside.ares.test
+          - evil-acme.test
+
+  proxy:
+    image: python:3.12-slim
+    command: ["python", "-u", "/src/lab/leakbox/proxy.py"]
+    environment:
+      EVENT_SOURCE: proxy
+      RUN_ID: ${RUN_ID:-r_local}
+    volumes:
+      - ..:/src:ro
+      - ./runs:/events
+    depends_on: [fake]
+    networks:
+      labnet: {}                 # reach the fake-service aliases
+      sandboxnet:
+        aliases: [proxy.lab]      # the sandbox's only reachable host
+
+  # The only place a real API key exists (§8). Not on labnet: it has no business
+  # reaching the fake services, and they have none reaching it.
+  gateway:
+    build:
+      context: ..
+      dockerfile: gateway/Dockerfile
+    environment:
+      EVENT_SOURCE: gateway
+      EVENTS_DIR: /events         # share the lab's flat event directory
+      RUN_ID: ${RUN_ID:-r_local}
+      # Left empty rather than required, so `selftest.sh` can bring the lab up
+      # without a key; the gateway then refuses calls with upstream_key_missing.
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      ARES_ADMIN_TOKEN: ${ARES_ADMIN_TOKEN:-ares-lab-admin}
+      ARES_ADMIN_HOST: 0.0.0.0    # so the host's defender can reach the lever
+    volumes:
+      - ./runs:/events
+    # Kill lever 1 lives on 8081. Published to host loopback only, for the
+    # defender. NOTE: binding 0.0.0.0 inside the container means the sandbox can
+    # also reach gateway.lab:8081, where ARES_ADMIN_TOKEN is the only thing
+    # stopping it -- the token is never present in the sandbox's environment.
+    # To remove even that path on the Linux VM, drop ARES_ADMIN_HOST and this
+    # port and set ARES_ADMIN_UDS=/run/ares/admin.sock with a mounted socket dir.
+    ports:
+      - "127.0.0.1:8081:8081"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      sandboxnet:
+        aliases: [gateway.lab]    # what the harness calls for LLM traffic
+      egressnet: {}               # the one way out
+
+  sandbox:
+    build:
+      context: ..                 # repo root, so the harness can be copied in
+      dockerfile: lab/sandbox/Dockerfile
+    depends_on: [proxy]
+    networks: [sandboxnet]        # NOT on labnet: the proxy is the only way to the services
+    environment:
+      # The dummy key. The gateway swaps in the real one; this value is useless
+      # anywhere else, and the real key is never present in this container.
+      ARES_DUMMY_KEY: ${ARES_DUMMY_KEY:-ares-dummy-r_local}
+      ARES_MODEL: ${ARES_MODEL:-nvidia/llama-3.3-nemotron-super-49b-v1.5}
+    # No /events mount: the event volume is never mounted into the sandbox (§3).
+    # hardened: no privileged, no docker.sock, no host mounts
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 512m
+    # gVisor per §7; Docker Desktop has no runsc, so default runc with caps dropped
+    # is the documented fallback (§12). Uncomment on the Linux VM:
+    # runtime: runsc
