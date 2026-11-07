@@ -1,4 +1,4 @@
-# Halcyon — Architecture
+# ARES — Architecture
 
 **Fire drills for AI agents.** HackUTD 2026: Zero Day · UT Dallas · November 7–8, 2026
 Team: Riyan Maknojia, Ronak Chavva, Prerita Babarjung, Yash Shah
