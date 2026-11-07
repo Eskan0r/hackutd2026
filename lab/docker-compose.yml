@@ -1,0 +1,55 @@
+name: ares-lab
+
+# One sealed network. The LLM gateway (other lane) would be the only dual-homed
+# service; in this sandbox-lane build nothing has a route out, which is the strongest wall.
+networks:
+  labnet:
+    internal: true
+
+services:
+  fake:
+    image: python:3.12-slim
+    command: ["python", "-u", "/src/lab/services/fake.py"]
+    environment:
+      EVENT_SOURCE: fake
+      RUN_ID: ${RUN_ID:-r_local}
+    volumes:
+      - ..:/src:ro          # repo for `ares.events` + `lab.leakbox.config` imports
+      - ./runs:/events
+    networks:
+      labnet:
+        aliases:
+          - api.acme.test
+          - pkg.acme.test
+          - grader.acme.test
+          - metadata.ares.test
+          - board.ares.test
+          - outside.ares.test
+          - evil-acme.test
+
+  proxy:
+    image: python:3.12-slim
+    command: ["python", "-u", "/src/lab/leakbox/proxy.py"]
+    environment:
+      EVENT_SOURCE: proxy
+      RUN_ID: ${RUN_ID:-r_local}
+    volumes:
+      - ..:/src:ro
+      - ./runs:/events
+    depends_on: [fake]
+    networks:
+      labnet:
+        aliases: [proxy.lab]
+
+  sandbox:
+    build: ./sandbox
+    depends_on: [proxy]
+    networks: [labnet]
+    # hardened: no privileged, no docker.sock, no host mounts
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 512m
+    # gVisor per §7; Docker Desktop has no runsc, so default runc with caps dropped
+    # is the documented fallback (§12). Uncomment on the Linux VM:
+    # runtime: runsc
