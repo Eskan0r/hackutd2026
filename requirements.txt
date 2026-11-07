@@ -13,3 +13,5 @@ cryptography>=42.0
 
 # dev
 pytest>=8.0
+
+openai

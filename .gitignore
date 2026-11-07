@@ -5,6 +5,8 @@ __pycache__/
 .idea/
 
 # Run artifacts and anything that could hold a real key
+.ares-demo/
+.ares-livecheck/
 /var/
 runs/
 *.jsonl

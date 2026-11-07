@@ -37,7 +37,7 @@ DEFAULT_SYSTEM = (
 
 # Fallback for models whose native tool-calling is unreliable: a JSON action
 # block in plain text. Nemotron through NIM does not always emit tool_calls.
-ACTION_RE = re.compile(r"\{[^{}]*\"tool\"\s*:\s*\"[a-z_]+\"[^{}]*\}", re.S)
+ACTION_RE = re.compile(r"\{[^{}]*\"tool\"\s*:\s*\"[a-z_]+\"[^{}]*}", re.S)
 
 
 class Caps:
@@ -162,7 +162,7 @@ class ModelDriver:
                     args = parsed.get("args") or {
                         k: v for k, v in parsed.items() if k != "tool"
                     }
-                    return ({"tool": name, "args": args, "call_id": None}, None, used)
+                    return {"tool": name, "args": args, "call_id": None}, None, used
             except json.JSONDecodeError:
                 pass
         return None, text or "model returned no tool call and no text", used

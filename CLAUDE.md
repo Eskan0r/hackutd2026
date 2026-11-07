@@ -17,9 +17,12 @@ Not yet built: `lab/` (Leakbox, fake services, DNS sinkhole), `defender/`, `scor
 ## Commands
 
 ```bash
-./.venv/bin/python -m pytest tests/ -q          # 24 tests, ~3s, no network
+./.venv/bin/python -m pytest tests/ -q       # 37 tests, ~4s, no network, no key
 ./.venv/bin/python -m pyflakes ares/ gateway/ agent/ tests/ scripts/
-./.venv/bin/python scripts/live_check.py        # needs NVIDIA_API_KEY; spends ~3 LLM calls
+./.venv/bin/python scripts/demo_kill.py      # watch the gateway lane + lever 1 run
+./.venv/bin/python scripts/live_check.py     # needs NVIDIA_API_KEY; ~3 LLM calls
+cd lab && ./selftest.sh                      # Leakbox lane; needs a Docker daemon
+cd lab && ./selftest-gateway.sh              # gateway lane; needs a Docker daemon
 ```
 
 The venv is Python 3.12 (matching `python:3.12-slim` in the images); `/usr/bin/python3` on this Mac
