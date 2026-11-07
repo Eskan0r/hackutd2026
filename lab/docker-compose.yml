@@ -97,7 +97,7 @@ services:
       # The dummy key. The gateway swaps in the real one; this value is useless
       # anywhere else, and the real key is never present in this container.
       ARES_DUMMY_KEY: ${ARES_DUMMY_KEY:-ares-dummy-r_local}
-      ARES_MODEL: ${ARES_MODEL:-nvidia/llama-3.3-nemotron-super-49b-v1.5}
+      ARES_MODEL: ${ARES_MODEL:-nvidia/nemotron-3-super-120b-a12b}
     # No /events mount: the event volume is never mounted into the sandbox (§3).
     # hardened: no privileged, no docker.sock, no host mounts
     cap_drop: [ALL]

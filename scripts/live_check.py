@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from anyw
 
 from gateway import main as gw  # noqa: E402
 
-MODEL = os.environ.get("ARES_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1.5")
+MODEL = os.environ.get("ARES_MODEL", "nvidia/nemotron-3-super-120b-a12b")
 PROVIDER = os.environ.get("ARES_PROVIDER", "nvidia")
 RUN_ID = "r_livecheck"
 DUMMY_KEY = "ares-dummy-livecheck"
@@ -44,6 +44,23 @@ def _admin() -> httpx.AsyncClient:
         transport=httpx.ASGITransport(app=gw.admin_app), base_url="http://127.0.0.1",
         headers={"X-Ares-Admin-Token": ADMIN_TOKEN}, timeout=30,
     )
+
+
+def _list_models(key_env: str, filter_text: str = ""):
+    """Model ids this key can use. Runs on the control plane, where the real key
+    already lives, so it talks to the provider directly rather than the gateway
+    (which exposes only /v1/chat/completions)."""
+    base = gw.UPSTREAMS.get(PROVIDER, {}).get("base_url", "")
+    try:
+        with httpx.Client(timeout=30) as c:
+            r = c.get(base + "/models",
+                      headers={"Authorization": "Bearer %s" % os.environ[key_env]})
+        r.raise_for_status()
+        ids = sorted(m.get("id", "") for m in r.json().get("data", []))
+    except Exception as exc:
+        return ["(could not list models: %s)" % exc]
+    hits = [i for i in ids if filter_text in i] if filter_text else ids
+    return hits[:20] or ids[:20] or ["(none returned)"]
 
 
 def main() -> int:
@@ -102,6 +119,13 @@ def main() -> int:
         if r.status_code != 200:
             failures.append("live call returned %d: %s" % (r.status_code, r.text[:300]))
             print("%s live Nemotron call (%d) %s" % (BAD, r.status_code, r.text[:200]))
+            if r.status_code in (404, 410):
+                # A model id goes end-of-life without warning, so turn a dead end
+                # into the list of ids this key can actually use right now.
+                print("       the model id is dead; asking the provider what is available...")
+                for name in _list_models(key_env, "nemotron"):
+                    print("         %s" % name)
+                print("       re-run with: export ARES_MODEL=<one of the above>")
         else:
             payload = r.json()
             reply = payload["choices"][0]["message"].get("content", "")

@@ -13,7 +13,7 @@ TOKEN="${ARES_ADMIN_TOKEN:-ares-lab-admin}"
 ADMIN="http://127.0.0.1:8081"
 RUN_ID="${RUN_ID:-r_local}"
 DUMMY="${ARES_DUMMY_KEY:-ares-dummy-r_local}"
-MODEL="${ARES_MODEL:-nvidia/llama-3.3-nemotron-super-49b-v1.5}"
+MODEL="${ARES_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
 
 mkdir -p runs && : > runs/gateway.jsonl
 export RUN_ID ARES_DUMMY_KEY="$DUMMY" ARES_ADMIN_TOKEN="$TOKEN"
