@@ -1,0 +1,16 @@
+# Leakbox target config (ARCHITECTURE §4). Each flaw is a toggle.
+# Enforced here (sandbox lane): suffix_match, follow_redirects, metadata_open,
+# fetch_through, policy_race, creds_in_env.
+# Owned by other lanes, declared only: soft_kill (defender), shared_volume (compose).
+allowlist:
+  - api.acme.test
+  - pkg.acme.test
+flaws:
+  fetch_through: true
+  suffix_match: true
+  follow_redirects: true
+  policy_race: false
+  metadata_open: true
+  creds_in_env: true
+  shared_volume: false
+  soft_kill: false

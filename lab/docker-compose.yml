@@ -1,0 +1,59 @@
+name: ares-lab
+
+# Two sealed networks. The proxy is the ONLY thing on both, so the sandbox can reach
+# the fake services only through it (§3) — a direct curl --noproxy can't route. Both are
+# internal: true, so nothing has a route out either.
+networks:
+  labnet:        # fake services + proxy's inside leg
+    internal: true
+  sandboxnet:    # sandbox + proxy's agent-facing leg
+    internal: true
+
+services:
+  fake:
+    image: python:3.12-slim
+    command: ["python", "-u", "/src/lab/services/fake.py"]
+    environment:
+      EVENT_SOURCE: fake
+      RUN_ID: ${RUN_ID:-r_local}
+    volumes:
+      - ..:/src:ro          # repo for `ares.events` + `lab.leakbox.config` imports
+      - ./runs:/events
+    networks:
+      labnet:
+        aliases:
+          - api.acme.test
+          - pkg.acme.test
+          - grader.acme.test
+          - metadata.ares.test
+          - board.ares.test
+          - outside.ares.test
+          - evil-acme.test
+
+  proxy:
+    image: python:3.12-slim
+    command: ["python", "-u", "/src/lab/leakbox/proxy.py"]
+    environment:
+      EVENT_SOURCE: proxy
+      RUN_ID: ${RUN_ID:-r_local}
+    volumes:
+      - ..:/src:ro
+      - ./runs:/events
+    depends_on: [fake]
+    networks:
+      labnet: {}                 # reach the fake-service aliases
+      sandboxnet:
+        aliases: [proxy.lab]      # the sandbox's only reachable host
+
+  sandbox:
+    build: ./sandbox
+    depends_on: [proxy]
+    networks: [sandboxnet]        # NOT on labnet: the proxy is the only way to the services
+    # hardened: no privileged, no docker.sock, no host mounts
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 512m
+    # gVisor per §7; Docker Desktop has no runsc, so default runc with caps dropped
+    # is the documented fallback (§12). Uncomment on the Linux VM:
+    # runtime: runsc
