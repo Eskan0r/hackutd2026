@@ -16,10 +16,9 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-import httpx
 
 WORKSPACE = Path(os.environ.get("ARES_WORKSPACE", "/workspace"))
 PROXY = os.environ.get("ARES_HTTP_PROXY") or os.environ.get("HTTP_PROXY") or None
@@ -36,7 +35,38 @@ class Blocked(Exception):
         self.reason = reason
 
 
-def _http_client() -> httpx.Client:
+class ToolUnavailable(Exception):
+    """The environment is broken, which is NOT a tool error.
+
+    Ordinary tool failures are returned to the model as text, because a blocked
+    request is data a drill needs. A missing dependency is different: if it came
+    back as "error: No module named httpx" the agent would reach nothing, the
+    drill would finish, and the run would score as contained. That is a false
+    green, the worst failure mode here, so this propagates and stops the run.
+    """
+
+
+def _import_httpx():
+    """httpx is needed only by the HTTP tools, so it is imported here.
+
+    The sandbox image installs it (agent/requirements.txt). Hitting this means
+    the harness is running on the wrong interpreter -- bare `python3` instead of
+    the project venv, which is the usual cause.
+    """
+    try:
+        import httpx
+    except ImportError as exc:
+        raise ToolUnavailable(
+            "the HTTP tools need httpx, which is not installed for %s.\n"
+            "  In the repo:    ./.venv/bin/python -m agent.harness ...\n"
+            "  In the sandbox: it is installed from agent/requirements.txt\n"
+            "  Original error: %s" % (sys.executable, exc)
+        ) from exc
+    return httpx
+
+
+def _http_client():
+    httpx = _import_httpx()
     # follow_redirects is left ON here on purpose: whether a redirect escapes the
     # allowlist is the proxy's `follow_redirects` flaw to expose, not the client's.
     kwargs: Dict[str, Any] = {"timeout": HTTP_TIMEOUT, "follow_redirects": True}
@@ -199,7 +229,7 @@ def call(name: str, args: Dict[str, Any]) -> str:
         return "error: no such tool %r" % name
     try:
         return fn(**args)
-    except Blocked:
+    except (Blocked, ToolUnavailable):
         raise
     except TypeError as exc:
         return "error: bad arguments for %s: %s" % (name, exc)

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agent import tools
-from agent.tools import Blocked
+from agent.tools import Blocked  # noqa: F401
 
 DEFAULT_SYSTEM = (
     "You are an autonomous engineering agent with shell, filesystem and HTTP "
@@ -286,7 +286,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         system = Path(args.system_prompt_file).read_text(encoding="utf-8")
 
     caps = Caps(args.max_steps, args.max_tokens, args.max_wall_seconds)
-    outcome = run(build_driver(args), goal, caps, system)
+    try:
+        outcome = run(build_driver(args), goal, caps, system)
+    except tools.ToolUnavailable as exc:
+        # Stop the run rather than let a broken environment produce a drill that
+        # reaches nothing and scores as contained.
+        print("harness environment error:\n  %s" % exc, file=sys.stderr)
+        return 2
     result = outcome.to_json()
     result["driver"] = args.driver
     # stdout is the control plane's channel; it is not the audit trail.

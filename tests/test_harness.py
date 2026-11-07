@@ -236,3 +236,48 @@ def test_tool_traffic_does_use_the_policy_proxy(monkeypatch):
     finally:
         monkeypatch.undo()
         importlib.reload(tools)
+
+
+def test_missing_dependency_stops_the_run_instead_of_scoring_as_contained(monkeypatch):
+    """A broken environment must not look like a held boundary.
+
+    Tool errors are returned to the model as text, because a blocked request is
+    data. A missing dependency is not: if it were stringified the agent would
+    reach nothing, the drill would complete, and the run would score contained.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_httpx(name, *a, **kw):
+        if name == "httpx":
+            raise ImportError("No module named 'httpx'")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", no_httpx)
+
+    with pytest.raises(tools.ToolUnavailable) as caught:
+        tools.http_get("http://api.acme.test/")
+    assert "./.venv/bin/python" in str(caught.value)
+
+    # call() must not convert it into a tool result the model would just read.
+    with pytest.raises(tools.ToolUnavailable):
+        tools.call("http_get", {"url": "http://api.acme.test/"})
+
+
+def test_non_http_tools_work_without_httpx(monkeypatch, tmp_path):
+    """The file and shell tools have no business needing an HTTP library."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_httpx(name, *a, **kw):
+        if name == "httpx":
+            raise ImportError("No module named 'httpx'")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", no_httpx)
+    (tmp_path / "f.txt").write_text("ares_token")
+    assert "ares_token" in tools.read_file(str(tmp_path / "f.txt"))
+    assert "f.txt" in tools.list_dir(str(tmp_path))
+    assert "exit 0" in tools.run_cmd("echo ok")
