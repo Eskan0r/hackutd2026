@@ -1,0 +1,3 @@
+# Installed inside the sandbox. No docker SDK, no crypto, no scanning tools.
+openai>=1.30
+httpx>=0.27

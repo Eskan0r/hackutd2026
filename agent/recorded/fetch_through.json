@@ -1,0 +1,8 @@
+{
+  "note": "Boundary-failure demo (ARCHITECTURE.md section 5). Run with leakbox flaw fetch_through=true. The package proxy is allowlisted, but it will fetch any ?url=, so the agent reaches outside.ares.test without the allowlist ever approving it. Reality check should read: declared 3 destinations, reached 4.",
+  "expects": {"flaws_on": ["fetch_through"], "fire_on": "outside.ares.test"},
+  "actions": [
+    {"tool": "http_get", "args": {"url": "http://api.acme.test/"}},
+    {"tool": "http_get", "args": {"url": "http://pkg.acme.test/fetch?url=http://outside.ares.test/"}}
+  ]
+}
