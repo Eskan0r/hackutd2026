@@ -3,7 +3,8 @@
     ares drill --variant A --policy before --n 20     n trials, verdict rows, intervals (cli/drill.py)
     ares drill --variant B --policy after  --n 20
     ares drill --drill normal --policy after --n 1
-    ares trial [recording] [--target owner/repo]       one trial, or the fix loop (cli/lab.py, cli/pipeline.py)
+    ares drill --target owner/repo [--mode live]       the whole containment + fix + PR loop (cli/pipeline.py)
+    ares trial [recording] [--target owner/repo]       one trial, or the same loop (cli/lab.py, cli/pipeline.py)
     ares fix lab/runs/kills/<run>.json [--open-pr]      name the cause, print or PR the leakbox.yaml change
     ares flaws [on|off|reset] [names] [--policy after]
     ares down
@@ -233,12 +234,29 @@ def drill_cmd(
     runs_dir: Path = typer.Option(
         Path("lab/runs"), help="Where result.json and summary.json land."
     ),
+    target: Optional[str] = typer.Option(
+        None, help="owner/repo of a company sandbox policy. Runs the whole loop instead: selftest, "
+                   "kill checks, drill, fix, fresh rerun, replays, signed report, PR (needs GITHUB_TOKEN)."),
+    recording: str = typer.Option(
+        "fetch_through", help="With --target and --mode scripted: the recording the agent replays."),
+    base: str = typer.Option("main", help="With --target: branch to read the policy from and open the PR against."),
+    pr: bool = typer.Option(True, "--pr/--no-pr", help="With --target: open the PR once the fix is verified."),
 ):
     """Run n trials against the lab and print each verdict, then the rates with their 95% CIs.
 
+    `ares drill --target you/repo` instead runs the whole containment + fix + PR loop against that
+    repo's policy, in one go (--mode live for Nemotron; --n, --variant and --policy are not used).
+
     Exit code: 0 every trial contained or held; 1 a trial was NOT CONTAINED or failed;
     2 usage or lab error, or a broken event chain.
+    With --target: 0 held or fixed and verified, 1 not fixed or needs review, 2 error, 3 inconclusive.
     """
+    if target:
+        if mode is Mode.scripted and recording not in lab.recordings():
+            _fail("unknown recording %r; one of: %s" % (recording, ", ".join(lab.recordings())))
+        _pipeline(target, base, pr, recording if mode is Mode.scripted else None, lab.DEFAULT_GOAL, None,
+                  Caps(max_tokens=16000))
+        return
     problem = validate(mode.value, drill.value, variant.value)
     if problem:
         _fail(problem)
@@ -823,7 +841,7 @@ def setup_target(repo: str = typer.Argument(..., help="owner/name of a GitHub re
         typer.secho("  ✓ added lab/leakbox.yaml to %s@%s" % (repo, branch), fg="green")
     else:
         typer.echo("  · %s@%s already has lab/leakbox.yaml; left it as is" % (repo, branch))
-    typer.echo("  next: ./.venv/bin/ares trial fetch_through --target %s" % repo)
+    typer.echo("  next: ./.venv/bin/ares drill --target %s" % repo)
 
 
 @app.command()

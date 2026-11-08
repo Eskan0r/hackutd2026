@@ -1,4 +1,4 @@
-"""One drill, start to finish, against a company's sandbox policy (`ares trial --target owner/repo`).
+"""One drill, start to finish, against a company's sandbox policy (`ares drill --target owner/repo`).
 
   1. Kill-switch selftest (defender/selftest.py): a full kill must be contained and a soft kill
      must be caught failing, or no result after it can be trusted.
@@ -122,7 +122,7 @@ def preflight(target: str, token: str, live: bool, gh_client: Optional[httpx.Cli
         problems.append("Docker is not installed or not responding: install Docker Desktop, start it, retry.")
     if live and not os.environ.get("NVIDIA_API_KEY"):
         problems.append("NVIDIA_API_KEY is missing: add it to .env (build.nvidia.com), or name a recording "
-                        "(e.g. `ares trial fetch_through --target ...`) to run without a model.")
+                        "(`ares drill --target ...` without --mode live) to run without a model.")
     if not token:
         problems.append("GITHUB_TOKEN is missing: add a fine-grained token for %s to .env "
                         "(Contents + Pull requests: read and write)." % target)
@@ -499,10 +499,10 @@ def _open_pr(summary: Dict[str, Any], signed: Dict[str, Any], gh: GitHub, base: 
         lines += [""] + _containment_lines(summary, signed_path)
         lines += ["## Change", "```diff", diff.rstrip("\n"), "```", ""]
         console = console_log(pid)
-        lines += ["## Console output", "<details open><summary>`ares trial --target %s` (%d lines, up to "
+        lines += ["## Console output", "<details open><summary>`ares drill --target %s` (%d lines, up to "
                   "opening this PR)</summary>" % (summary["target"]["repo"], len(console)), "",
                   "```text"] + console + ["```", "</details>", ""]
-        footer = ["_Opened by `ares trial --target`. %sCause, fix, verification and containment come from fixed "
+        footer = ["_Opened by `ares drill --target`. %sCause, fix, verification and containment come from fixed "
                   "rules, not a model._" % ("Title and summary written by `%s` and checked against the JSON. " %
                                             narration.model if narration else "")]
         json_block = ["## Summary JSON (also committed as `%s`)" % report_path, "<details><summary>Show JSON"

@@ -13,7 +13,7 @@ policy), the LLM gateway (`gateway/`, kill lever 1), the agent harness (`agent/`
 defender (`defender/`, all three levers with `docker inspect` verification), the scorer and
 signer (`scoring/`), the shared contracts and hash-chained event log (`ares/`), and the `ares`
 CLI (`cli/`): `ares drill` runs n trials and prints verdicts with Clopper–Pearson intervals;
-`ares trial --target` runs the whole containment + fix + PR loop in one command (below).
+`ares drill --target` runs the whole containment + fix + PR loop in one command (below).
 
 Not built yet: the DNS sinkhole and the CI gate. The dashboard is on the `web-app` branch.
 
@@ -68,8 +68,8 @@ Make your own target repo (an empty GitHub repo you own, private is fine), then 
 **Run it** (one terminal; everything starts and stops on its own):
 
 ```bash
-./.venv/bin/ares trial fetch_through --target <you>/<repo>   # recorded agent: deterministic, no model calls
-./.venv/bin/ares trial --target <you>/<repo>                 # live Nemotron agent
+./.venv/bin/ares drill --target <you>/<repo>               # recorded agent: deterministic, no model calls
+./.venv/bin/ares drill --target <you>/<repo> --mode live   # live Nemotron agent
 ```
 
 The PR description includes the containment table, the run's console output (exactly what
@@ -121,7 +121,7 @@ ares drill --drill normal --policy after --n 1     # the fix did not break usefu
 ares drill --mode live --n 3                       # live Nemotron instead of the recording; needs NVIDIA_API_KEY
 ares trial fetch_through                           # one trial with the full evidence/kill printout (exit 3 = inconclusive)
 ares fix lab/runs/kills/<run>.json [--open-pr]     # name the flaw behind a kill, print the leakbox.yaml change, or open a PR
-ares trial --target owner/repo                     # the whole fix loop against that repo's policy; needs GITHUB_TOKEN
+ares drill --target owner/repo                     # the whole containment + fix + PR loop; needs GITHUB_TOKEN
 ares flaws [--policy after]                        # list what each policy leaves on; `ares flaws off <name>` edits leakbox.yaml
 ares down                                          # tear down
 ```
