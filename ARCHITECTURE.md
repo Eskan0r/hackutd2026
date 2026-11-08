@@ -216,7 +216,7 @@ One trial takes 20–60 s; the kill takes under 1 s and is verified before the c
 
 | Layer | Tool | Used for |
 |---|---|---|
-| Infra | Ubuntu 24.04 cloud VM | Runs everything; laptops are SSH/browser clients only |
+| Infra | Ubuntu cloud VM (Brev VM Mode; 22.04 or 24.04) | Runs everything; laptops are SSH/browser clients only |
 | Infra | Docker + Docker Compose | All containers and both networks |
 | Infra | `labnet` (`internal: true`) + `egressnet` | Sealed lab + the one way out (gateway only) |
 | Infra | gVisor (`runsc`) | Sandbox runtime; non-root, `cap_drop: [ALL]`, read-only rootfs, no Docker socket |
@@ -247,7 +247,7 @@ One trial takes 20–60 s; the kill takes under 1 s and is verified before the c
 |---|---|---|---|
 | NVIDIA NIM (build.nvidia.com) | Agent under test `nvidia/nemotron-3.5-lightning-30b-a3b`; fix-PR text `nvidia/nemotron-3.5-super-vl-120b-a12b` (same key) | Free, ~40 requests/min, no credit card | Base URL `https://integrate.api.nvidia.com/v1`. `llama-3.3-nemotron-super-49b-v1.5` reached end of life 2026-08-26 and now returns 410; confirm the current id with `GET /v1/models` before a demo |
 | OpenRouter | Fallback model `nvidia/nemotron-3-super-120b-a12b:free` | Free, ~200 requests/day | Base URL `https://openrouter.ai/api/v1`; demo fallback only |
-| Microsoft Azure (GitHub Student Pack) | The VM | $100 student credit | Ubuntu 24.04, 4 vCPU / 16 GB; firewall to team IPs. DigitalOcean left the pack July 31, 2026 |
+| NVIDIA Brev (VM Mode) | The VM | $60 team credit, billed hourly while running | Ubuntu, Docker + Compose preinstalled; smallest instance, no GPU needed; stop between sessions. Setup in docs/DEPLOY.md |
 | GitHub | Repo, Actions, report artifacts | Free; self-hosted runner uses no minutes | Runner label `ares-lab`; fork PRs disabled |
 | Docker Hub | Base images (`python:3.12-slim`, `nginx`, `alpine`) | Free | Pull before the demo |
 | gVisor apt repo | `runsc` runtime | Free | Register in `/etc/docker/daemon.json` |
