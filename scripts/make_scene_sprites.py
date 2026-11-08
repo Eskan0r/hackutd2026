@@ -472,6 +472,9 @@ GRASS = {"base": hx("#6ab04c"), "dark": hx("#4e8f3a"), "lite": hx("#8fd16a"), "d
 WOOD = {"top": hx("#d59a52"), "lite": hx("#ecb874"), "base": hx("#b5793c"),
         "shade": hx("#8a5a2b"), "deep": hx("#5e3a19")}
 BOX = (28, 30, 484, 258)                 # outer edge of the frame
+# sandbox.png ships cropped to the frame plus a 2px grass rim (x, y, w, h);
+# web/static/ui/scene.js places everything in these cropped pixels
+CROP = (26, 28, 461, 241)
 RAIL = 12                                # rail width seen from above
 FRONT = 9                                # near rail's front face height
 FLOWERS = [hx("#ffffff"), hx("#f7d14a"), hx("#f29ac2")]
@@ -721,8 +724,10 @@ def main() -> None:
     args = ap.parse_args()
 
     stage = sandbox_stage()
-    write_png(SPRITES / "sandbox.png", stage.px)
-    print("wrote sandbox.png (%dx%d)" % (STAGE_W, STAGE_H))
+    cx, cy, cw, ch = CROP
+    cropped = [row[cx:cx + cw] for row in stage.px[cy:cy + ch]]
+    write_png(SPRITES / "sandbox.png", cropped)
+    print("wrote sandbox.png (%dx%d)" % (cw, ch))
     meadow = meadow_tile()
     write_png(SPRITES / "meadow.png", meadow.px)
     print("wrote meadow.png (%dx%d tile)" % (MEADOW, MEADOW))

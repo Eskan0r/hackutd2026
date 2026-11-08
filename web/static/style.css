@@ -101,8 +101,8 @@ img { image-rendering: pixelated; user-select: none; }
 
 /* The sandbox is fitted inside this box, which starts below the Show logs
  * button, so the button sits on the meadow and never on the sandbox. It does
- * not clip: the ground image crops its own overhang (clip-path, set from
- * useFitScale), so Poyo can fall in from the top of the window. */
+ * not clip (the sandbox is fitted inside it, never overhangs), so Poyo can
+ * fall in from the top of the window. */
 .stage-fit {
   position: absolute;
   inset: 72px 16px 16px;

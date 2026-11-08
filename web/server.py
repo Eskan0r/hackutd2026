@@ -33,8 +33,22 @@ from web import model
 
 STATIC = Path(__file__).resolve().parent / "static"
 
+class RevalidatedStatic(StaticFiles):
+    """Static files the browser must revalidate on every load.
+
+    With no Cache-Control the browser guesses a freshness window and reuses
+    imported ES modules without asking, so an edited scene.js kept running
+    stale. ``no-cache`` still caches; the ETag turns each check into a 304.
+    """
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Any:
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["cache-control"] = "no-cache"
+        return resp
+
+
 app = FastAPI(title="Ares dashboard", docs_url=None, redoc_url=None)
-app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+app.mount("/static", RevalidatedStatic(directory=str(STATIC)), name="static")
 
 
 @app.get("/")

@@ -17,24 +17,27 @@ import { DustCanvas, Puff } from "/static/ui/effects.js";
 const { useState, useEffect, useRef, useLayoutEffect } = React;
 
 /* Native resolution of the sandbox art; everything is placed in these pixels. */
-const STAGE_W = 512;
-const STAGE_H = 288;
+/* sandbox.png is cropped to the box plus a 2px grass rim (it was 512x288;
+ * the crop starts at (26, 28) of that), so every coordinate below is in the
+ * cropped image's pixels. */
+const STAGE_W = 461;
+const STAGE_H = 241;
 const POYO_SIZE = 0.6;     // Poyo is drawn at 60% of the stage's pixel scale
 const WALK_SPEED = 70;     // stage pixels per second
-const SAND = { x0: 64, x1: 448, y0: 96, y1: 240 };   // where Poyo may rest
+const SAND = { x0: 38, x1: 422, y0: 68, y1: 212 };   // where Poyo may rest
 const FALL_FROM = 230;     // least drop, stage px; he always starts above the window
 const GRAVITY = 900;       // stage pixels per second squared
 
 /* Props, top-left in stage pixels. One toy per agent tool. */
 const TOYS = {
-  get:     { tool: "http_get",       src: "toy-get",     x: 96,  y: 70 },
-  post:    { tool: "http_post",      src: "toy-post",    x: 176, y: 58 },
-  read:    { tool: "read_file",      src: "toy-read",    x: 88,  y: 182 },
-  list:    { tool: "list_dir",       src: "toy-list",    x: 150, y: 214 },
-  run:     { tool: "run_cmd",        src: "toy-run",     x: 300, y: 210 },
-  blocked: { tool: "report_blocked", src: "toy-blocked", x: 432, y: 190 },
+  get:     { tool: "http_get",       src: "toy-get",     x: 70,  y: 42 },
+  post:    { tool: "http_post",      src: "toy-post",    x: 150, y: 30 },
+  read:    { tool: "read_file",      src: "toy-read",    x: 62,  y: 154 },
+  list:    { tool: "list_dir",       src: "toy-list",    x: 124, y: 186 },
+  run:     { tool: "run_cmd",        src: "toy-run",     x: 274, y: 182 },
+  blocked: { tool: "report_blocked", src: "toy-blocked", x: 406, y: 162 },
 };
-const CASTLE = { x: 360, y: 70, w: 64, h: 84 };
+const CASTLE = { x: 334, y: 42, w: 64, h: 84 };
 const IGNITE_MS = 1400;    // flames catching and climbing, before the blaze loop
 /* The siren drops in on a pole from the top of the window all the way down to
  * the middle of the sandbox, drawn a bit larger than the props. */
@@ -52,25 +55,20 @@ const CASTLE_ANIMS = {
  *  including the logs panel opening and closing), and the stage's top-left
  *  inside the box's positioned parent (.stage-area), in CSS pixels. */
 function useFitScale(ref) {
-  const [fit, setFit] = useState({ scale: 1, ox: 0, oy: 0, cropX: 0, cropY: 0 });
+  const [fit, setFit] = useState({ scale: 1, ox: 0, oy: 0 });
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return undefined;
-    // fill the box; allow up to 12% overhang, which only crops the sandbox
-    // art's own grass margin, never a prop
+    // contain: sandbox.png is cropped to the box itself, so any overhang
+    // would cut into the sandbox's own frame
     const fit = () => {
       const sx = el.clientWidth / STAGE_W;
       const sy = el.clientHeight / STAGE_H;
-      const contain = Math.min(sx, sy);
-      const scale = Math.max(0.1, Math.min(Math.max(sx, sy), contain * 1.12));
+      const scale = Math.max(0.1, Math.min(sx, sy));
       setFit({
         scale,
         ox: el.offsetLeft + (el.clientWidth - STAGE_W * scale) / 2,
         oy: el.offsetTop + (el.clientHeight - STAGE_H * scale) / 2,
-        // how far the sandbox art overhangs the box on each side; only the
-        // ground is cropped, so Poyo can fall in from above the box
-        cropX: Math.max(0, (STAGE_W * scale - el.clientWidth) / 2),
-        cropY: Math.max(0, (STAGE_H * scale - el.clientHeight) / 2),
       });
     };
     fit();
@@ -100,7 +98,7 @@ function randomSpot() {
     const y = SAND.y0 + Math.random() * (SAND.y1 - SAND.y0);
     if (clear(x, y)) return { x, y };
   }
-  return { x: 256, y: 160 };
+  return { x: 230, y: 132 };
 }
 
 /** Walk cycle for a direction. The front walk faces down-right as drawn, so
@@ -169,8 +167,8 @@ function PoyoActor({ manifest, scale, pos, pose: p, phase, say, shaking, puff, o
   const k = scale * POYO_SIZE;
   // keep the bubble on screen: below Poyo near the top edge, nudged inward
   // near the sides (its tail still points at him)
-  const below = pos.y < 120;
-  const align = pos.x > STAGE_W - 130 ? "right" : pos.x < 130 ? "left" : "center";
+  const below = pos.y < 92;
+  const align = pos.x > STAGE_W - 105 ? "right" : pos.x < 104 ? "left" : "center";
   const anchor = below ? { top: `${8 * k}px` } : { bottom: `${(ay - 14) * k}px` };
   const body = phase === "dust"
     ? html`<${DustCanvas} src=${`${SPRITES}/poyo/panic.png`} w=${cw} h=${ch} frame=${0} k=${k}
@@ -399,8 +397,7 @@ export function Scene() {
       <div class="stage-area">
         <div class="stage-fit" ref=${areaRef}>
         <div class="stage" style=${stage} role="img" aria-label="The sandbox">
-          <img class="ground" src=${`${SPRITES}/sandbox.png`} alt="" draggable="false"
-            style=${{ clipPath: `inset(${fit.cropY}px ${fit.cropX}px)` }} />
+          <img class="ground" src=${`${SPRITES}/sandbox.png`} alt="" draggable="false" />
           <${Sprite} key=${castle} src=${`${SPRITES}/${c.src}.png`} w=${CASTLE.w} h=${CASTLE.h}
             frames=${c.frames} fps=${c.fps} once=${!!c.once} x=${CASTLE.x} y=${CASTLE.y} scale=${scale}
             label="Sandcastle: the boundary" />
