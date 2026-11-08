@@ -10,8 +10,9 @@ report on whether the boundary held and how fast the agent was stopped.
 build order; read it before any design work. When an implementation decision contradicts it, update
 `ARCHITECTURE.md` in the same change rather than letting them drift.
 
-**Built so far** (Phase 1 of §11): `ares/contracts.py`, `ares/events.py`, `gateway/`, `agent/`.
-Not yet built: `lab/` (Leakbox, fake services, DNS sinkhole), `defender/`, `scoring/`, `cli/`,
+**Built so far** (Phase 1 of §11): `ares/contracts.py`, `ares/events.py`, `gateway/`, `agent/`,
+`cli/` (`ares drill`: one trial, no kill yet).
+Not yet built: `lab/` (Leakbox, fake services, DNS sinkhole), `defender/`, `scoring/`,
 `web/`, `drills/`.
 
 ## Commands
