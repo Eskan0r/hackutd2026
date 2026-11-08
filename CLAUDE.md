@@ -10,25 +10,29 @@ report on whether the boundary held and how fast the agent was stopped.
 build order; read it before any design work. When an implementation decision contradicts it, update
 `ARCHITECTURE.md` in the same change rather than letting them drift.
 
-**Built:** `ares/` (contracts + hash-chained events), `lab/` (Leakbox proxy, fake services, bait,
-sandbox image), `gateway/` (also kill lever 1), `agent/` (harness, tools, scripted replay),
+**Built:** `ares/` (contracts, hash-chained events, the `Lever` protocol and the three Docker
+levers), `lab/` (Leakbox proxy, fake services, bait, sandbox image), `gateway/` (also kill
+lever 1), `agent/` (harness, tools, scripted replay), `defender/` (levers 2–3 + the event
+tailer), `scoring/` (scorer + signer), `cli/` (`ares drill` runs one trial and wires in the
+defender, so a fire now triggers a verified kill — see `DEFENDER.md` for the kill path), and
 `web/` (the read-only dashboard).
 
-**Not built:** `defender/` (levers 2–3 + the event tailer), `scoring/`, `cli/`, `drills/`,
-DNS sinkhole, `.github/workflows/`. **So there is no automatic fire→kill and no real `ttk_ms`** —
-a live drill fires, but nothing stops the agent. Lever 1 on demand is 3–5 ms (deny + verify).
+**Not built:** DNS sinkhole, `drills/` variants A/B/C (the goal files exist), bait generator,
+fix templates, multi-trial orchestration, `.github/workflows/`. Lever 1 on demand is 3–5 ms
+(deny + verify).
 
 ## Commands
 
 ```bash
-./.venv/bin/python -m pytest tests/ -q       # 54 tests, ~4s, no network, no key
-./.venv/bin/python -m pyflakes ares/ gateway/ agent/ web/ tests/ scripts/
+./.venv/bin/python -m pytest tests/ -q       # 109 tests, ~5s, no network, no key
+./.venv/bin/python -m pyflakes ares/ gateway/ agent/ defender/ scoring/ cli/ web/ tests/ scripts/
 ./.venv/bin/python scripts/demo_kill.py      # watch the gateway lane + lever 1 run
 ./.venv/bin/python scripts/live_check.py     # needs NVIDIA_API_KEY; ~3 LLM calls
 ./.venv/bin/python scripts/pick_model.py     # which models this key can actually invoke
 ./.venv/bin/python -m web.server             # dashboard on 127.0.0.1:8090; reads runs off disk
 cd lab && ./selftest.sh                      # Leakbox lane; needs a Docker daemon
 cd lab && ./selftest-gateway.sh              # gateway lane; needs a Docker daemon
+./.venv/bin/python -m defender selftest      # three-lever kill + soft_kill false-green check; needs Docker
 ```
 
 The venv is Python 3.12 (matching `python:3.12-slim` in the images); `/usr/bin/python3` on this Mac

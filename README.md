@@ -10,17 +10,22 @@ Design and decisions: **[ARCHITECTURE.md](ARCHITECTURE.md)**. This file is just 
 
 Built: the Leakbox target (`lab/`), the LLM gateway (`gateway/`, which is kill lever 1),
 the agent harness (`agent/`), the shared contracts and hash-chained event log (`ares/`),
-and the dashboard (`web/`).
+the defender with levers 2–3 (`docker_disconnect`, `docker_pause`), the scorer and signer
+(`scoring/`), and the dashboard (`web/`).
 
-Not built yet: the defender with levers 2–3 (`docker_disconnect`, `docker_pause`), the
-scorer, the signer and the `ares` CLI. **So there is no verified three-lever kill and no
-signed report yet** — the `ttk_ms` you see is lever 1 only. The dashboard says so on every
-screen rather than rounding it up to a kill.
+The `ares` CLI (`cli/`) runs one trial: `ares drill`. It wires in the defender, so a fire
+triggers a verified three-lever kill and a signed report.
+
+Not built yet: the DNS sinkhole, the `drills/` A/B/C variants (the goal files exist), the
+bait generator, the fix templates and multi-trial orchestration. The dashboard reports only
+what the evidence supports on every screen — a pull nothing observed reads **unverified**,
+never contained.
 
 ## Setup
 
 ```bash
 python3.12 -m venv .venv && ./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python -m pip install -e .    # installs the `ares` command
 ```
 
 Use `./.venv/bin/python` for everything. A bare `python3` on macOS is the system 3.9 and
@@ -53,7 +58,28 @@ cd lab
 ./selftest-gateway.sh   # gateway reachable, no other egress, lever 1 holds
 ```
 
-Then drive the agent inside the box. Flaw toggles live in `lab/leakbox.yaml`:
+Then drive the agent inside the box with the CLI. It starts the lab, registers the run
+with the gateway (minting the dummy key), runs the harness in the sandbox, and prints
+that run's events from the lab log:
+
+```bash
+ares drill fetch_through   # replay a recording (blocked, fetch_through, soft_kill); no key
+ares drill                 # live Nemotron; needs NVIDIA_API_KEY
+ares flaws                 # list Leakbox flaws; `ares flaws off [name...]`, `on`, `reset`
+ares down                  # tear down
+```
+
+The breakout-then-fix loop: `ares drill fetch_through` (exit 1), `ares flaws off`,
+`ares drill blocked` (exit 0), `ares flaws reset`.
+
+To type `ares` without activating the venv, link it onto your PATH once:
+`mkdir -p ~/.local/bin && ln -sf "$PWD/.venv/bin/ares" ~/.local/bin/ares` and add
+`~/.local/bin` to `PATH` in `~/.zshrc`. `ares --install-completion` adds tab completion.
+
+Exit code: `0` no fire/breach event, `1` breakout seen, `2` error (including a broken
+event chain). No kill is pulled yet: that is the defender's job.
+
+Or by hand. Flaw toggles live in `lab/leakbox.yaml`:
 
 ```bash
 # replay a recording (deterministic, no key)
@@ -112,8 +138,11 @@ dummy key the harness uses) — see `lab/README.md`.
 | `lab/` | Leakbox: policy proxy with flaw toggles, fake services, bait, the sandbox image |
 | `gateway/` | LLM reverse proxy: key swap, fixed upstreams, caps, and kill lever 1 |
 | `agent/` | harness, tools, scripted replay, recordings |
+| `defender/` | the event tailer and levers 2–3; verifies every pull via `docker inspect` |
+| `scoring/` | the scorer (Clopper–Pearson intervals) and the report signer |
+| `cli/` | the `ares` command: `drill.py` drives a trial, `main.py` is the Typer front end |
 | `web/` | the dashboard: read-only FastAPI API + a React page. React is vendored under `static/vendor/`, so there is no `npm install` and no CDN at demo time |
-| `tests/` | 54 tests, hermetic (a stub upstream stands in for NVIDIA NIM) |
+| `tests/` | 109 tests, hermetic (a stub upstream stands in for NVIDIA NIM) |
 | `scripts/` | `demo_kill.py`, `live_check.py` |
 
 ## Safety

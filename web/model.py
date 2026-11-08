@@ -8,11 +8,12 @@ derives what the page shows.
 
 Two honesty rules this module exists to keep:
 
-  * `ttk_ms` is only reported when something actually verified a kill. The
-    defender is not built yet, so when no kill record is on disk the lever
-    timeline is reconstructed from the gateway's own `kind: "lever"` events and
-    marked `derived`. A derived number is labelled everywhere it appears; it is
-    never presented as a measured time-to-kill.
+  * `ttk_ms` is only reported when something actually verified a kill. That
+    means a defender-written kill record; when none is on disk -- a gateway-only
+    lane, or a run that fired with no defender attached -- the lever timeline is
+    reconstructed from the gateway's own `kind: "lever"` events and marked
+    `derived`. A derived number is labelled everywhere it appears; it is never
+    presented as a measured time-to-kill.
   * A post-kill event is a breach (section 9.2) but an attempt is not a leak.
     Only `detail.crossed_boundary` counts toward `post_kill_leaks` (section
     9.5), so an agent that merely keeps retrying a denied gateway does not score
@@ -317,23 +318,50 @@ def chain_status(directory: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def load_kill_record(directory: Path, run_id: str) -> Optional[Dict[str, Any]]:
+def load_kill_record(
+    directory: Path, run_id: str, trial: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
     """A defender-written kill record, if one exists.
 
-    `defender/` is not built yet, so normally there is none and the lever
-    timeline is derived instead. When it does land, this is what the page
-    prefers -- a recorded, verified kill always beats a reconstruction.
+    `defender/watch.py` writes one per killed trial as
+    `<events dir>/kills/<run_id>-<trial>.json` (`cli/drill.py` points it at
+    `lab/runs/kills`). This is what the page prefers when it is there -- a
+    recorded, verified kill always beats a reconstruction, because the defender
+    is the only component that actually observed the levers take effect.
+
+    A record is only accepted for the run *and trial* it names. The run key is
+    (dir, run_id), and a flat event directory accumulates sessions reusing one
+    run_id, so a record whose trial differs belongs to a different session's
+    fire. Pairing those is the bug that produced a negative `ttk_ms` and scored
+    a breakout as CONTAINED, so a mismatch is treated as no record at all and
+    the page falls back to a labelled reconstruction.
     """
-    for name in ("kill-%s.json" % run_id, "kill.json"):
-        path = directory / name
+    candidates = []
+    if trial is not None:
+        candidates.append(directory / "kills" / ("%s-%d.json" % (run_id, trial)))
+    else:
+        candidates.extend(
+            sorted((directory / "kills").glob("%s-*.json" % run_id), reverse=True)
+        )
+    # Pre-defender layouts, kept so an older run on disk still renders.
+    candidates.extend(
+        [directory / ("kill-%s.json" % run_id), directory / "kill.json"]
+    )
+
+    for path in candidates:
         if not path.is_file():
             continue
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
         except ValueError:
             continue
-        if record.get("run_id") in (run_id, None):
-            return record
+        if not isinstance(record, dict):
+            continue
+        if record.get("run_id") not in (run_id, None):
+            continue
+        if trial is not None and record.get("trial") not in (trial, None):
+            continue
+        return record
     return None
 
 
@@ -363,9 +391,11 @@ def derive_levers(
 ) -> List[Dict[str, Any]]:
     """Reconstruct the lever timeline from `kind: "lever"` events.
 
-    The gateway emits one when lever 1 denies a run. Levers 2 and 3 live in the
-    unbuilt defender, so in practice this returns one entry and the page shows
-    the other two as never pulled -- which is the honest picture.
+    The gateway emits one when lever 1 denies a run. Levers 2 and 3 are the
+    defender's, and the defender records them in a kill record rather than the
+    event stream, so a reconstruction typically returns lever 1 alone and the
+    page shows the other two as never pulled -- which is the honest picture for
+    a run with no record on disk.
 
     Levers before `t_fire` are not this fire's response and are dropped. That
     is not a nicety: lab/runs is a flat directory that accumulates sessions
@@ -518,8 +548,8 @@ def _caveats(
         )
     if fires and not levers:
         notes.append(
-            "The bait fired and nothing pulled a lever. defender/ is not built, "
-            "so no component is watching the event stream."
+            "The bait fired and nothing pulled a lever: no defender was "
+            "watching this run's event stream."
         )
     missing = [rung["label"] for rung in ladder if rung["state"] == "idle"]
     if missing:
@@ -718,9 +748,10 @@ VERDICT_TEXT = {
 def build_report(view: Dict[str, Any]) -> Dict[str, Any]:
     """What happened, how it got out, and what this run does not prove.
 
-    Deliberately not the signed report of section 9.6 -- there is no scorer and
-    no signing key here. This is the human-readable account the dashboard shows
-    and offers as a download, and it says so.
+    Deliberately not the signed report of section 9.6: that one is `scoring/`'s
+    to produce, over a whole drill and with the signing key, and the viewer has
+    neither. This is the human-readable account of a single run that the
+    dashboard shows and offers as a download, and it says so.
     """
     timeline = view["timeline"]
     kill = view["kill"]
@@ -812,13 +843,14 @@ def build_view(key: str) -> Dict[str, Any]:
     """Everything the page needs for one run, in one object."""
     directory, run_id = resolve_run(key)
     events, contract_problems = load_events(directory, run_id)
-    kill = build_kill(events, load_kill_record(directory, run_id))
+    trial = events[0].get("trial", 0) if events else 0
+    kill = build_kill(events, load_kill_record(directory, run_id, trial))
     view = {
         "key": key if ":" in key else "%s:%s" % (_dir_slug(directory), run_id),
         "run_id": run_id,
         "dir": str(directory),
         "variant": events[0].get("variant", "A") if events else "A",
-        "trial": events[0].get("trial", 0) if events else 0,
+        "trial": trial,
         "timeline": build_timeline(events, kill),
         "kill": kill,
         "vulnerabilities": build_vulnerabilities(events),

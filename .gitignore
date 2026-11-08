@@ -12,3 +12,4 @@ runs/
 *.jsonl
 ares.key
 .env
+*.egg-info/
