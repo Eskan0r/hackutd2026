@@ -1,6 +1,6 @@
 // npm run dev -- the dashboard and a drill, in one command.
 //
-//   npm run dev                         drill ARES_TARGET from .env, live Nemotron
+//   npm run dev                         drill ARES_TARGET from .env, live agent (ARES_MODEL)
 //   npm run dev -- --target o/r --mode scripted     anything after -- goes to `ares drill`
 //   npm run dashboard                   just the dashboard (same as --no-drill)
 //

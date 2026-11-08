@@ -487,3 +487,11 @@ def test_lab_up_retries_once_when_a_container_vanished_mid_recreate(monkeypatch,
     monkeypatch.setattr(lab.time, "sleep", lambda s: None)
     lab.lab_up("r_x")
     assert len(calls) == 2
+
+
+def test_the_live_model_is_named_exactly(monkeypatch):
+    monkeypatch.delenv("ARES_MODEL", raising=False)
+    assert lab.agent_model() == "nvidia/nemotron-3.5-lightning-30b-a3b"
+    monkeypatch.setenv("ARES_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
+    assert lab.agent_model() == "nvidia/nemotron-3-ultra-550b-a55b"
+    assert lab.agent_model("nvidia/other") == "nvidia/other"
