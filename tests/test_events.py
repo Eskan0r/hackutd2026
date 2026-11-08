@@ -13,6 +13,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 import pytest
 
+from ares import events as _events_mod
 from ares.contracts import Event
 from ares.events import (
     GENESIS,
@@ -172,6 +173,11 @@ def _append(args):
     return os.getpid()
 
 
+@pytest.mark.skipif(
+    _events_mod.fcntl is None,
+    reason="cross-process appends are serialised with flock, which Windows lacks; every "
+    "concurrent writer runs in a Linux container, where it applies",
+)
 def test_concurrent_processes_keep_the_chain_intact(lab_env):
     with ProcessPoolExecutor(max_workers=4) as pool:
         list(pool.map(_append, [(str(lab_env), 5)] * 4))

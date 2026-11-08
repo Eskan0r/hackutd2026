@@ -9,6 +9,11 @@ bad()  { printf '  \033[31m✗\033[0m %s\n' "$1"; }
 todo() { printf '  \033[33m!\033[0m %s\n' "$1"; }
 ready=1
 
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    bad "This script is for macOS/Linux. On Windows run: npm run setup"; exit 1 ;;
+esac
+
 echo "Ares setup"
 
 # 1. Python 3.12+ (the lab images use 3.12; macOS's built-in python3 is 3.9 and will not work)
@@ -33,11 +38,35 @@ if ./.venv/bin/python -m pip install -q --disable-pip-version-check -r requireme
 else
   bad "pip install failed (see the error above)"; exit 1
 fi
+# Put `ares` on PATH (package.json "bin" -> scripts/ares.mjs), as npm run setup does.
+ARES=./.venv/bin/ares
+if command -v npm >/dev/null 2>&1 && npm link --silent --no-audit --no-fund >/dev/null 2>&1    && command -v ares >/dev/null 2>&1; then
+  ARES=ares
+  ok "ares is on your PATH: run 'ares drill' from any terminal"
+else
+  todo "could not put ares on PATH (needs Node 18+ and a writable npm prefix); use ./.venv/bin/ares"
+fi
 
 # 3. .env with the two keys
 if [ ! -f .env ]; then
   cp .env.example .env
   ok "Created .env from .env.example"
+fi
+# The gateway admin token `ares drill` needs: a random lab secret, filled only if empty.
+if ! grep -Eq "^ARES_ADMIN_TOKEN=.+" .env; then
+  token=$("$PY" -c "import secrets; print(secrets.token_hex(16))")
+  if grep -Eq "^ARES_ADMIN_TOKEN=" .env; then
+    "$PY" - "$token" <<'EOF'
+import pathlib, re, sys
+p = pathlib.Path(".env")
+p.write_text(re.sub(r"(?m)^ARES_ADMIN_TOKEN=.*$", "ARES_ADMIN_TOKEN=" + sys.argv[1], p.read_text()))
+EOF
+  else
+    printf '
+ARES_ADMIN_TOKEN=%s
+' "$token" >> .env
+  fi
+  ok "ARES_ADMIN_TOKEN generated in .env"
 fi
 for key in NVIDIA_API_KEY GITHUB_TOKEN; do
   if grep -Eq "^${key}=.+" .env; then
@@ -67,13 +96,13 @@ if [ "$ready" = 1 ]; then
 else
   echo "Almost there. Fix the ! items above, then:"
 fi
-cat <<'EOF'
+cat <<EOF
   1. Keys in .env (no quotes, no spaces around =):
        NVIDIA_API_KEY   build.nvidia.com  (free)
        GITHUB_TOKEN     GitHub > Settings > Developer settings > Fine-grained tokens:
                         only your target repo; Contents + Pull requests = Read and write
   2. Make an empty GitHub repo you own (private is fine), then:
-       ./.venv/bin/ares setup-target <you>/<repo>
+       $ARES setup-target <you>/<repo>
   3. Run the whole drill (one terminal, about 2 minutes):
-       ./.venv/bin/ares drill --target <you>/<repo>
+       $ARES drill --target <you>/<repo>
 EOF

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 import httpx
@@ -22,6 +23,11 @@ from gateway import main as gw
 
 ADMIN_TOKEN = "test-admin-token"
 DUMMY_KEY = "ares-dummy-r_harness"
+
+# run_cmd shells out to /bin/sh because it only ever runs inside the Linux sandbox.
+needs_posix_sh = pytest.mark.skipif(
+    not os.path.exists("/bin/sh"), reason="run_cmd needs /bin/sh (the sandbox is Linux)"
+)
 
 # --- scripted driver --------------------------------------------------------
 
@@ -84,6 +90,7 @@ def test_step_cap_stops_the_loop(tmp_path):
     assert out.steps == 3 and out.stop_reason == "step_cap"
 
 
+@needs_posix_sh
 def test_wall_cap_stops_the_loop(tmp_path):
     script = tmp_path / "s.json"
     script.write_text(
@@ -105,6 +112,7 @@ def test_wall_cap_stops_the_loop(tmp_path):
     assert time.monotonic() - t0 < 5
 
 
+@needs_posix_sh
 def test_tool_errors_are_data_not_crashes(tmp_path, monkeypatch):
     assert "error:" in tools.read_file(str(tmp_path / "nope.txt"))
     assert "error:" in tools.list_dir(str(tmp_path / "nope"))
@@ -242,6 +250,7 @@ def _deny():
     return asyncio.run(body())
 
 
+@needs_posix_sh
 def test_model_driver_loops_through_the_gateway(live_gateway):
     driver = harness.ModelDriver(
         model="nemotron-test",
@@ -393,6 +402,7 @@ def test_missing_dependency_stops_the_run_instead_of_scoring_as_contained(monkey
         tools.call("http_get", {"url": "http://api.acme.test/"})
 
 
+@needs_posix_sh
 def test_non_http_tools_work_without_httpx(monkeypatch, tmp_path):
     """The file and shell tools have no business needing an HTTP library."""
     import builtins

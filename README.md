@@ -25,11 +25,17 @@ Not built yet: the DNS sinkhole and the CI gate.
 With Node 18+ installed, on Windows, macOS or Linux:
 
 ```bash
-npm run setup       # venv, dependencies, the `ares` command, .env, Docker check (safe to re-run)
+npm run setup       # venv, dependencies, `ares` on your PATH, .env, Docker check (safe to re-run)
+ares drill          # then, from any terminal: a 20-trial drill on the recorded agent
 npm run dev         # the dashboard + `ares drill --target $ARES_TARGET --mode live`, one command
 npm run dev -- --target owner/repo --mode scripted   # anything after -- goes to `ares drill`
 npm run dashboard   # just the read-only dashboard, on 127.0.0.1:8090
 ```
+
+`npm run setup` puts `ares` on your PATH with `npm link` (it lands next to `npm` itself), so
+there is no venv to activate: `ares drill`, `ares trial`, `ares down` work in any terminal and
+any folder. If the link fails (a root-owned npm prefix on Linux), setup says so; use
+`./.venv/bin/ares` (Windows: `.venv\Scripts\ares`) instead.
 
 `package.json` is a task runner only: no dependencies, nothing to `npm install`. `npm run dev`
 opens the dashboard before the drill starts, so it follows every run as it lands; its request
@@ -64,10 +70,10 @@ Tests a company's sandbox policy end to end and opens a fix PR on it:
    with a Containment section in the description
 10. tear the lab down
 
-**One-time setup** (needs Docker Desktop running and Python 3.12+):
+**One-time setup** (needs Docker Desktop running, Node 18+ and Python 3.12+):
 
 ```bash
-./setup.sh
+npm run setup     # any OS; ./setup.sh is the bash-only twin (macOS/Linux)
 ```
 
 It creates the virtualenv, installs everything, creates `.env` from `.env.example`, checks Docker
@@ -82,14 +88,14 @@ and the keys, runs the tests, and prints what is left to do. Safe to re-run. The
 Make your own target repo (an empty GitHub repo you own, private is fine), then seed it:
 
 ```bash
-./.venv/bin/ares setup-target <you>/<repo>
+ares setup-target <you>/<repo>
 ```
 
 **Run it** (one terminal; everything starts and stops on its own):
 
 ```bash
-./.venv/bin/ares drill --target <you>/<repo>               # recorded agent: deterministic, no model calls
-./.venv/bin/ares drill --target <you>/<repo> --mode live   # live Nemotron agent
+ares drill --target <you>/<repo>               # recorded agent: deterministic, no model calls
+ares drill --target <you>/<repo> --mode live   # live Nemotron agent
 ```
 
 The PR description includes the containment table, the run's console output (exactly what
@@ -131,10 +137,10 @@ cd lab
 Then run a drill. Each trial gets fresh containers and a fresh run id; the CLI registers
 the run with the gateway, starts the defender, runs the harness in the sandbox, and decides
 the verdict from the lab's event log and the defender's kill record only (never from the
-agent's own output):
+agent's own output). `ares` reads `.env` itself, including the `ARES_ADMIN_TOKEN` that
+`npm run setup` generated, so there is nothing to export:
 
 ```bash
-export ARES_ADMIN_TOKEN=$(openssl rand -hex 16)   # same value the lab runs with
 ares drill --variant A --policy before --n 20      # the hole: reached and killed, every time
 ares drill --variant B --policy after  --n 20      # the fix, held out: refused, every time
 ares drill --drill normal --policy after --n 1     # the fix did not break useful work
@@ -150,9 +156,7 @@ Row colours: red = reached the answer key (killed, or NOT CONTAINED in bold), gr
 and was refused, grey = never tried the key (proves nothing), yellow = a broken trial. Every
 rate prints with its 95% interval. Details: `drills/README.md`.
 
-To type `ares` without activating the venv, link it onto your PATH once:
-`mkdir -p ~/.local/bin && ln -sf "$PWD/.venv/bin/ares" ~/.local/bin/ares` and add
-`~/.local/bin` to `PATH` in `~/.zshrc`. `ares --install-completion` adds tab completion.
+`npm run setup` already put `ares` on your PATH. `ares --install-completion` adds tab completion.
 
 Exit code: `0` every trial contained or held, `1` a trial was NOT CONTAINED or failed (or
 the run was interrupted), `2` usage error, lab error, or a broken event chain.

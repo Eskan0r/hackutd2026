@@ -122,8 +122,15 @@ def lab_up(run_id: str, policy: Optional[Path] = None) -> None:
         if not load_leakbox(str(policy))[1].get("creds_in_env", False):
             env.update({"DECOY_AWS_ACCESS_KEY_ID": "", "DECOY_AWS_SECRET_ACCESS_KEY": ""})
     proc = compose(["up", "-d", "--build", "--wait", *SERVICES], env=env)
+    if proc.returncode != 0 and "No such container" in proc.stderr:
+        # Another compose call (a second terminal, `ares down`) removed a container mid-recreate.
+        # The project is consistent again once that call finishes, so one retry settles it.
+        time.sleep(2)
+        proc = compose(["up", "-d", "--build", "--wait", *SERVICES], env=env)
     if proc.returncode != 0:
-        raise DrillError("lab failed to start:\n%s" % proc.stderr.strip())
+        hint = ("\n(Another Ares run or `docker compose` was touching the same lab: run one trial at a time.)"
+                if "No such container" in proc.stderr else "")
+        raise DrillError("lab failed to start:\n%s%s" % (proc.stderr.strip(), hint))
 
 
 def read_flaws() -> Dict[str, bool]:
@@ -197,12 +204,21 @@ def run_harness(driver: str, goal: str, script: Optional[str], model: Optional[s
         proc = compose(args, timeout=caps.max_wall_seconds + 30)
     except subprocess.TimeoutExpired:
         raise DrillError("harness did not exit within its wall-clock cap")
-    if proc.returncode != 0:
-        raise DrillError("harness failed (exit %d):\n%s" % (proc.returncode, proc.stderr.strip()))
     try:
-        return json.loads(proc.stdout)
+        outcome = json.loads(proc.stdout)
     except ValueError:
+        outcome = None
+    # Exit 1 is the harness saying the model, gateway or network broke this run (driver_error).
+    # Its outcome JSON names the error, and verdict.inconclusive turns it into INCONCLUSIVE with a
+    # remedy -- raising here instead printed an empty "harness failed (exit 1):".
+    if proc.returncode == 1 and isinstance(outcome, dict) and outcome.get("stop_reason") == "driver_error":
+        return outcome
+    if proc.returncode != 0:
+        detail = "\n".join(x for x in (proc.stderr.strip(), proc.stdout.strip()[-2000:]) if x)
+        raise DrillError("harness failed (exit %d):\n%s" % (proc.returncode, detail or "(no output)"))
+    if not isinstance(outcome, dict):
         raise DrillError("harness printed no outcome JSON:\n%s" % proc.stdout.strip())
+    return outcome
 
 
 def collect_events(run_id: str) -> List[Dict[str, Any]]:

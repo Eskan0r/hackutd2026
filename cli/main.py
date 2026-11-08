@@ -126,6 +126,26 @@ def _fail(message: str) -> None:
     raise typer.Exit(EXIT_ERROR)
 
 
+def _require_docker() -> None:
+    """Fail with the fix, not a WinError or 2000 chars of compose stderr, when Docker is missing."""
+    try:
+        running = subprocess.run(["docker", "info"], capture_output=True, timeout=20).returncode == 0
+    except FileNotFoundError:
+        _fail("Docker is not installed: install Docker Desktop, start it, and retry (the lab runs in containers)")
+    except subprocess.TimeoutExpired:
+        _fail("Docker is not responding: restart Docker Desktop (or the daemon) and retry")
+    if not running:
+        _fail("Docker is installed but not running: start Docker Desktop (or the daemon) and retry")
+
+
+def _repo_path(path: Path) -> Path:
+    """A path as typed, else the same path under the repo: kill records print repo-relative
+    (lab/runs/kills/...), and `ares` runs from whatever folder the user is in."""
+    if path.exists() or path.is_absolute():
+        return path
+    return REPO / path if (REPO / path).exists() else path
+
+
 def _rule(title: str = "") -> str:
     if not title:
         return "─" * WIDTH
@@ -236,7 +256,7 @@ def drill_cmd(
         20, min=1, help="Trials. Each gets fresh containers and a fresh run id."
     ),
     runs_dir: Path = typer.Option(
-        Path("lab/runs"), help="Where result.json and summary.json land."
+        REPO / "lab" / "runs", help="Where result.json and summary.json land.", show_default="lab/runs"
     ),
     target: Optional[str] = typer.Option(
         None, help="owner/repo of a company sandbox policy. Runs the whole loop instead: selftest, "
@@ -266,8 +286,10 @@ def drill_cmd(
         _fail(problem)
     if not os.environ.get("ARES_ADMIN_TOKEN"):
         _fail(
-            "export ARES_ADMIN_TOKEN=$(openssl rand -hex 16) first (same value the lab runs with)"
+            "ARES_ADMIN_TOKEN is not set: run `npm run setup` (it writes a random one to .env), "
+            "or put ARES_ADMIN_TOKEN=<any random hex> in .env yourself"
         )
+    _require_docker()
     if mode is Mode.live and not (
         os.environ.get("NVIDIA_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
     ):
@@ -644,9 +666,8 @@ def flaws(
 def fix(
     kill_record: Path = typer.Argument(
         ...,
-        exists=True,
         dir_okay=False,
-        help="A defender kill record, e.g. lab/runs/kills/r_ab12-0.json.",
+        help="A defender kill record, e.g. lab/runs/kills/r_ab12-0.json (from any folder).",
     ),
     events_dir: Path = typer.Option(
         lab.EVENTS_DIR, help="Directory holding the lab's *.jsonl event logs."
@@ -665,6 +686,9 @@ def fix(
     and a PR is opened against --base; the local checkout is untouched.
     Exit code: 0 a fix was found, 1 needs manual review, 2 error.
     """
+    kill_record = _repo_path(kill_record)
+    if not kill_record.is_file():
+        _fail("no kill record at %s" % kill_record)
     token = os.environ.get("GITHUB_TOKEN", "")
     if open_pr and not token:
         _fail(
@@ -786,12 +810,13 @@ def setup_target(repo: str = typer.Argument(..., help="owner/name of a GitHub re
 @app.command()
 def down():
     """Stop and remove the lab containers and networks."""
-    if not os.environ.get("ARES_ADMIN_TOKEN"):
-        _fail("compose needs ARES_ADMIN_TOKEN set, even to stop the lab")
+    _require_docker()
+    # Compose must interpolate ARES_ADMIN_TOKEN just to parse the file; stopping the lab
+    # does not use it, so any value will do here.
     proc = subprocess.run(
         ["docker", "compose", "down", "--remove-orphans"],
         cwd=str(LAB_DIR),
-        env=dict(os.environ),
+        env={**os.environ, "ARES_ADMIN_TOKEN": lab.admin_token()},
         capture_output=True,
         text=True,
     )

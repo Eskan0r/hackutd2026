@@ -3,6 +3,9 @@
   "private": true,
   "description": "Task runner only: no dependencies, nothing to npm install. The dashboard has no build step (CLAUDE.md); these scripts just find the Python venv on any OS.",
   "type": "module",
+  "bin": {
+    "ares": "scripts/ares.mjs"
+  },
   "engines": {
     "node": ">=18"
   },

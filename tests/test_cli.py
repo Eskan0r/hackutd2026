@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
 import httpx
 import pytest
@@ -38,6 +39,7 @@ def drill(tmp_path, monkeypatch, events, kill_record=None, args=(), token="t0k3n
         return made[-1]
 
     monkeypatch.setattr(main, "ComposeLab", factory)
+    monkeypatch.setattr(main, "_require_docker", lambda: None)  # hermetic: no daemon needed
     if token:
         monkeypatch.setenv("ARES_ADMIN_TOKEN", token)
     else:
@@ -126,8 +128,59 @@ def test_down_runs_compose_down_in_the_lab_dir(monkeypatch):
     monkeypatch.setenv("ARES_ADMIN_TOKEN", "t0k3n")
     out = runner.invoke(main.app, ["down"])
     assert out.exit_code == 0, out.output
-    assert calls and calls[0][0][:3] == ["docker", "compose", "down"]
-    assert str(calls[0][1]).endswith("/lab")
+    compose = [c for c in calls if c[0][:2] == ["docker", "compose"]]
+    assert compose and compose[0][0][:3] == ["docker", "compose", "down"]
+    assert Path(compose[0][1]).name == "lab"
+
+
+def test_down_does_not_need_the_admin_token(monkeypatch):
+    seen = []
+
+    def fake_run(argv, **kw):
+        seen.append(kw.get("env") or {})
+
+        class P:
+            returncode = 0
+            stderr = ""
+
+        return P()
+
+    monkeypatch.setattr(main.subprocess, "run", fake_run)
+    monkeypatch.delenv("ARES_ADMIN_TOKEN", raising=False)
+    out = runner.invoke(main.app, ["down"])
+    assert out.exit_code == 0, out.output
+    assert seen[-1].get("ARES_ADMIN_TOKEN")  # compose still gets a value to interpolate
+
+
+def test_missing_docker_is_a_clear_error_not_a_traceback(monkeypatch):
+    def no_docker(argv, **kw):
+        raise FileNotFoundError(2, "The system cannot find the file specified")
+
+    monkeypatch.setattr(main.subprocess, "run", no_docker)
+    monkeypatch.setenv("ARES_ADMIN_TOKEN", "t0k3n")
+    for argv in (["drill", "--n", "1"], ["down"]):
+        out = runner.invoke(main.app, argv)
+        assert out.exit_code == 2, out.output
+        assert "Docker is not installed" in out.output
+        assert out.exception is None or isinstance(out.exception, SystemExit)
+
+
+def test_stopped_docker_says_to_start_it(monkeypatch):
+    class P:
+        returncode = 1
+
+    monkeypatch.setattr(main.subprocess, "run", lambda argv, **kw: P())
+    monkeypatch.setenv("ARES_ADMIN_TOKEN", "t0k3n")
+    out = runner.invoke(main.app, ["drill", "--n", "1"])
+    assert out.exit_code == 2 and "not running" in out.output
+
+
+def test_repo_relative_paths_resolve_from_any_folder(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert main._repo_path(Path("lab/leakbox.yaml")) == main.REPO / "lab" / "leakbox.yaml"
+    assert main._repo_path(Path("nope/missing.json")) == Path("nope/missing.json")
+    out = runner.invoke(main.app, ["fix", "lab/runs/kills/does-not-exist.json"])
+    assert out.exit_code == 2 and "no kill record" in out.output
 
 # ---- single-trial `ares trial`, `fix`, `flaws` (cli/lab.py) ----
 
@@ -399,3 +452,38 @@ def test_drill_with_target_rejects_an_unknown_recording(monkeypatch):
     monkeypatch.setattr(m, "_pipeline", lambda *a: pytest.fail("must not run"))
     res = runner.invoke(app, ["drill", "--target", "acme/sandbox", "--recording", "nope"])
     assert res.exit_code == 2 and "unknown recording" in res.output
+
+
+# ---- run_harness / lab_up: failures must say why ----
+
+class _Proc:
+    def __init__(self, rc, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = rc, stdout, stderr
+
+
+def test_a_driver_error_comes_back_as_an_outcome_not_an_empty_crash(monkeypatch):
+    out = {"steps": 0, "stop_reason": "driver_error", "tool_calls": [],
+           "errors": ["APIStatusError: 502 bad gateway"]}
+    monkeypatch.setattr(lab, "compose", lambda args, **kw: _Proc(1, json.dumps(out)))
+    got = lab.run_harness("model", "goal", None, None, lab.Caps())
+    assert got["stop_reason"] == "driver_error" and "502" in got["errors"][0]
+
+
+def test_other_harness_failures_show_stdout_too(monkeypatch):
+    monkeypatch.setattr(lab, "compose", lambda args, **kw: _Proc(2, "Traceback: boom", ""))
+    with pytest.raises(lab.DrillError, match="boom"):
+        lab.run_harness("model", "goal", None, None, lab.Caps())
+
+
+def test_lab_up_retries_once_when_a_container_vanished_mid_recreate(monkeypatch, tmp_path):
+    calls = []
+
+    def fake(args, **kw):
+        calls.append(args)
+        return _Proc(1, "", "Error response from daemon: No such container: 3d53") if len(calls) == 1 else _Proc(0)
+
+    monkeypatch.setattr(lab, "compose", fake)
+    monkeypatch.setattr(lab, "EVENTS_DIR", tmp_path / "ev")
+    monkeypatch.setattr(lab.time, "sleep", lambda s: None)
+    lab.lab_up("r_x")
+    assert len(calls) == 2

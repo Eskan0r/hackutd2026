@@ -2,7 +2,8 @@
 // it only creates what is missing. The cross-platform twin of ./setup.sh.
 //
 //   1. a Python 3.12+ venv in .venv
-//   2. requirements + the `ares` command (pip install -e .)
+//   2. requirements + the `ares` command (pip install -e .), linked onto PATH
+//      with `npm link` so a bare `ares drill` works in any terminal
 //   3. .env from .env.example; ARES_ADMIN_TOKEN filled if empty; key check
 //   4. Docker running?
 //   (--test also runs the pytest suite)
@@ -58,6 +59,23 @@ function setupVenv() {
   ok(`dependencies installed; the ares command is ${venvBin("ares")}`);
 }
 
+/** Put `ares` on PATH: npm link installs scripts/ares.mjs (package.json "bin")
+ *  into npm's global bin, which is already on PATH wherever node is. Best
+ *  effort -- a root-owned npm prefix just means using the venv path instead. */
+function linkCommand() {
+  const r = spawnSync("npm", ["link", "--silent", "--no-audit", "--no-fund"], {
+    cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], shell: IS_WIN,
+  });
+  const where = quiet(IS_WIN ? "where" : "which", ["ares"]);
+  if (r.status === 0 && where.status === 0) {
+    ok("`ares` is on your PATH: run `ares drill` from any terminal");
+    return "ares";
+  }
+  const direct = IS_WIN ? ".venv\\Scripts\\ares" : "./.venv/bin/ares";
+  todo(`could not put \`ares\` on PATH (npm link failed); use ${direct} instead`);
+  return direct;
+}
+
 /** Make sure .env exists and has what the drill needs. Only empty values are
  *  ever filled, and only ARES_ADMIN_TOKEN (a random lab secret, like the VM
  *  bootstrap makes); the API keys are yours to paste. */
@@ -99,11 +117,12 @@ function runTests() {
   const r = quiet(venvBin("python"), ["-m", "pytest", "tests/", "-q", "-p", "no:cacheprovider"]);
   const last = (r.stdout || "").trim().split(/\r?\n/).pop();
   if (r.status === 0) ok(`tests: ${last}`);
-  else todo(`tests: ${last} (on Windows a few harness tests fail: they shell out to sh)`);
+  else todo(`tests: ${last}`);
 }
 
 console.log("Ares setup");
 setupVenv();
+const ares = linkCommand();
 let ready = setupEnv();
 ready = checkDocker() && ready;
 if (process.argv.includes("--test")) runTests();
@@ -115,6 +134,9 @@ console.log(`  1. Keys in .env (no quotes, no spaces around =):
        GITHUB_TOKEN     fine-grained, only your target repo; Contents + Pull requests read/write
        ARES_TARGET      the owner/repo to drill, e.g. you/sandbox-policy
   2. Once per target repo that has no policy yet:
-       ${cyan(`${IS_WIN ? ".venv\\Scripts\\ares" : "./.venv/bin/ares"} setup-target <owner>/<repo>`)}
+       ${cyan(`${ares} setup-target <owner>/<repo>`)}
   3. Dashboard + drill, one command:
-       ${cyan("npm run dev")}`);
+       ${cyan("npm run dev")}
+     or just the drill, in this terminal:
+       ${cyan(`${ares} drill --target <owner>/<repo>`)}               recorded agent, no model calls
+       ${cyan(`${ares} drill --target <owner>/<repo> --mode live`)}   live Nemotron`);
