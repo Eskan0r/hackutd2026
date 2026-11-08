@@ -591,3 +591,79 @@ def test_tally_mentions_failures_only_when_there_are_some():
 def test_a_drill_where_nothing_breached_says_so_plainly():
     line = tally_line(_summary(10, held=10))
     assert "0 breached" in line and "10 refused" in line
+
+
+# --- stopping at the first breach (`ares hunt`) ----------------------------
+
+
+class CountingLab(StubLab):
+    """A StubLab that counts trials and only fires from `fire_from` onward.
+
+    `build_result` sets fired = (a kill record exists) or (an event fired), so
+    a stub that hands back a kill every trial would look like it fired every
+    trial. Both have to track `fire_from`.
+    """
+
+    def __init__(self, events_dir, fire_from, kill_record=None, **kw):
+        super().__init__(events_dir, [], **kw)
+        self.fire_from = fire_from
+        self.kill_record = kill_record
+        self.trials = 0
+
+    def register_run(self, spec, dummy_key):
+        self.trials += 1
+        self._fires = spec.trial >= self.fire_from
+        # a fire once we are far enough in, otherwise a plain allowed call
+        self.events = [ev("fire")] if self._fires else [ev("info", decision="allowed")]
+        self.kill = self.kill_record if self._fires else None
+        return super().register_run(spec, dummy_key)
+
+
+def test_stop_after_ends_the_drill_on_the_first_breach(tmp_path):
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    lab = CountingLab(events_dir, fire_from=2, kill_record=kill(True))
+    s = run_drill(
+        lab, "live", "propensity", "A", "before", 10, tmp_path / "r",
+        drill_id="d_hunt", stop_after=lambda r: r.fired,
+    )
+    assert lab.trials == 3, "should have stopped on the third trial, not run all ten"
+    assert s.n == 3 and len(s.trials) == 3
+    assert [t.fired for t in s.trials] == [False, False, True]
+
+
+def test_stopping_on_purpose_is_not_an_interrupt(tmp_path):
+    """`interrupted` means Ctrl-C, and the exit code keys off it. A hunt that
+    found what it was looking for has not been interrupted."""
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    s = run_drill(
+        CountingLab(events_dir, fire_from=0, kill_record=kill(True)),
+        "live", "propensity", "A", "before", 10, tmp_path / "r",
+        drill_id="d_h2", stop_after=lambda r: r.fired,
+    )
+    assert s.interrupted is False
+    assert s.n == 1
+
+
+def test_without_stop_after_every_trial_still_runs(tmp_path):
+    """The cap must not change the default drill's behaviour."""
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    lab = CountingLab(events_dir, fire_from=0, kill_record=kill(True))
+    s = run_drill(
+        lab, "live", "propensity", "A", "before", 4, tmp_path / "r", drill_id="d_h3",
+    )
+    assert lab.trials == 4 and s.n == 4
+
+
+def test_a_hunt_that_never_fires_runs_the_whole_cap(tmp_path):
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    lab = CountingLab(events_dir, fire_from=99)
+    s = run_drill(
+        lab, "live", "propensity", "A", "before", 3, tmp_path / "r",
+        drill_id="d_h4", stop_after=lambda r: r.fired,
+    )
+    assert lab.trials == 3
+    assert not any(t.fired for t in s.trials)

@@ -305,11 +305,21 @@ def run_drill(
     drill_id: Optional[str] = None,
     on_result: Optional[Callable[[TrialResult], None]] = None,
     max_wall_seconds: int = 90,
+    stop_after: Optional[Callable[[TrialResult], bool]] = None,
 ) -> DrillSummary:
     """n trials on fresh containers with fresh run ids, then a scored summary.
 
     Ctrl-C finishes the current trial's bookkeeping, writes the summary for the
     trials completed, and marks it interrupted.
+
+    `stop_after(result)` ends the drill early when it returns True, so `n` reads
+    as a cap on attempts rather than a sample size. Stopping on purpose is not a
+    half-finished drill, so the summary is NOT marked interrupted -- that flag
+    means Ctrl-C, and the exit code keys off it.
+
+    A caller that stops on the first success has a stopping rule, not n fixed
+    trials, so the usual rates do not describe a population: `ares hunt` says so
+    rather than printing an interval over them.
     """
     drill_id = drill_id or new_drill_id()
     runs_dir = Path(runs_dir)
@@ -345,6 +355,8 @@ def run_drill(
             _write(runs_dir / spec.run_id / "result.json", result)
             if on_result:
                 on_result(result)
+            if stop_after is not None and stop_after(result):
+                break
     except KeyboardInterrupt:
         interrupted = True
     spec0 = TrialSpec(drill_id, 0, "%s-00" % drill_id, mode, drill, variant, policy)

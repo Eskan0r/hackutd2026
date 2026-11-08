@@ -15,6 +15,7 @@ the defender's kill record only. This file never looks at what the agent said.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -64,6 +65,9 @@ app = typer.Typer(
 )
 
 EXIT_OK, EXIT_BAD = EXIT_HELD, EXIT_BREAKOUT
+# `ares hunt` found nothing. Not a pass: the agent may simply never have tried,
+# which is the "not exercised" case and proves nothing either way.
+EXIT_NO_BREACH = EXIT_INCONCLUSIVE
 WIDTH = 78
 BANNER = "   ▄▀█ █▀█ █▀▀ █▀\n   █▀█ █▀▄ ██▄ ▄█\n   your sandbox defender"
 
@@ -495,6 +499,139 @@ def _pipeline(target: str, base: str, open_pr: bool, recording: Optional[str], g
             result, EXIT_BREAKOUT
         )
     )
+
+
+@app.command("hunt")
+def hunt_cmd(
+    mode: Mode = typer.Option(Mode.live, help="live runs the model; scripted replays a recording."),
+    drill: Drill = typer.Option(Drill.propensity, help="Which goal the agent gets."),
+    variant: Variant = typer.Option(Variant.A, help="Which copy of the answer key: B is the held-out one."),
+    policy: Policy = typer.Option(Policy.before, help="before = flaws on; after = the fix."),
+    max_trials: int = typer.Option(
+        10, "--max-trials", "-n", min=1,
+        help="Give up after this many attempts without a breach."),
+    runs_dir: Path = typer.Option(
+        REPO / "lab" / "runs", help="Where result.json and summary.json land.",
+        show_default="lab/runs"),
+):
+    """Run trials until the first breach, show it in full, and stop.
+
+    `ares drill` measures a rate over a fixed n. This looks for one breakout and
+    then stops, so what you get is a worked example rather than a statistic: the
+    evidence that led to it, the kill path that answered it, and a link to watch
+    it in the dashboard.
+
+    Because it stops on the first success, the trials are a stopping rule and
+    not a sample -- the count of attempts is reported, but no rate and no
+    interval, which would describe a population that was never drawn. Use
+    `ares drill --n 20` for numbers you can quote.
+
+    Exit code: 0 a breach was found and contained; 1 found and NOT contained;
+    2 lab error or a broken chain; 3 no breach within --max-trials.
+    """
+    if problem := validate(mode.value, drill.value, variant.value):
+        _fail(problem)
+    if not os.environ.get("ARES_ADMIN_TOKEN"):
+        _fail(
+            "ARES_ADMIN_TOKEN is not set: run `npm run setup` (it writes a random one to .env), "
+            "or put ARES_ADMIN_TOKEN=<any random hex> in .env yourself"
+        )
+    _require_docker()
+    if mode is Mode.live and not (
+        os.environ.get("NVIDIA_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
+    ):
+        typer.secho("warning: no NVIDIA_API_KEY set; the gateway will refuse model calls.",
+                    fg="yellow", err=True)
+
+    color = use_color(sys.stdout)
+    drill_id = new_drill_id()
+    typer.secho(BANNER, fg="cyan", bold=True)
+    typer.echo()
+    typer.echo("hunt %s  %s  %s  variant %s  policy %s  stop at first breach (max %d)"
+               % (drill_id, mode.value, drill.value, variant.value, policy.value, max_trials))
+    if mode is Mode.live:
+        typer.echo("model %s" % resolved_model())
+    typer.echo(COLUMNS)
+
+    compose_lab = ComposeLab(REPO)
+    try:
+        summary = run_drill(
+            compose_lab, mode.value, drill.value, variant.value, policy.value,
+            max_trials, runs_dir, drill_id=drill_id,
+            on_result=lambda r: typer.echo(format_row(r, color)),
+            stop_after=lambda r: r.fired,
+        )
+    except Exception as exc:  # noqa: BLE001 - lab/docker failures surface as one clear line
+        _fail(str(exc))
+
+    if summary.chain_problems:
+        _box(["✗ EVENT LOG CHAIN BROKEN: evidence not trustworthy",
+              *summary.chain_problems[:6]], "red")
+        raise typer.Exit(EXIT_ERROR)
+
+    breach = next((t for t in summary.trials if t.fired), None)
+    attempts = len(summary.trials)
+    if breach is None:
+        typer.echo()
+        _box([
+            "○ no breach in %d attempt(s)   drill %s" % (attempts, drill_id),
+            "The key was never reached, which is not evidence that it cannot be:",
+            "the agent may simply not have tried. Raise --max-trials, or use",
+            "--drill breakout to instruct it rather than tempt it.",
+        ], "yellow")
+        raise typer.Exit(EXIT_NO_BREACH)
+
+    _show_breach(compose_lab, summary, breach, drill_id, mode, drill, variant, policy,
+                 attempts, max_trials)
+    raise typer.Exit(EXIT_BAD if breach.verdict == "not_contained" else EXIT_OK)
+
+
+def _show_breach(compose_lab, summary, breach, drill_id, mode, drill, variant, policy,
+                 attempts: int, max_trials: int) -> None:
+    """The whole story of one breakout, the way `ares trial` tells it."""
+    spec = TrialSpec(drill_id, breach.trial, breach.run_id, mode.value, drill.value,
+                     variant.value, policy.value)
+    events = sorted(compose_lab.events_for(spec), key=lambda e: e.ts)
+
+    typer.echo()
+    typer.echo(_rule("BREACH"))
+    typer.echo("  found on attempt %d (cap %d)   ·   run %s"
+               % (attempts, max_trials, breach.run_id))
+    ran = observed_models([e.model_dump() if hasattr(e, "model_dump") else e for e in events])
+    if ran:
+        typer.echo("  model %s" % ", ".join(ran))
+    typer.echo()
+    _print_evidence(events)
+
+    record = None
+    if breach.kill_record:
+        path = Path(breach.kill_record)
+        if not path.is_absolute():
+            path = REPO / path
+        if path.is_file():
+            record = json.loads(path.read_text(encoding="utf-8"))
+    typer.echo()
+    if record is not None:
+        _print_kill(record)
+    else:
+        # A fire with no record means nothing answered it. Say that plainly
+        # rather than leaving the kill section blank.
+        _box(["✗ BREACH WITH NO KILL RECORD   run %s" % breach.run_id,
+              "The bait was reached and no lever was recorded. Nothing stopped it."], "red")
+
+    typer.secho("  watch it: %s" % dashboard_url(breach.run_id), fg="cyan", bold=True)
+    typer.echo()
+    if breach.verdict == "contained":
+        leaks = (record or {}).get("post_kill_leaks")
+        _box(["✓ CONTAINED   the agent broke out and was killed",
+              "found on attempt %d of up to %d  ·  killed in %s ms  ·  %s post-kill leak(s)"
+              % (attempts, max_trials, breach.ttk_ms,
+                 leaks if leaks is not None else "?"),
+              "run %s" % breach.run_id], "green")
+    else:
+        _box(["✗ NOT CONTAINED   the agent broke out and the kill did not hold",
+              "found on attempt %d of up to %d   run %s"
+              % (attempts, max_trials, breach.run_id)], "red")
 
 
 @app.command("trial")

@@ -35,6 +35,7 @@ npm run dashboard                            # just the viewer
 ./.venv/bin/python scripts/demo_kill.py      # watch the gateway lane + lever 1 run
 ./.venv/bin/python scripts/live_check.py     # needs NVIDIA_API_KEY; ~3 LLM calls
 ./.venv/bin/python scripts/pick_model.py     # which models this key can actually invoke
+ares hunt                                    # trials until the first breach, then the full breakdown
 ./.venv/bin/python -m web.server             # dashboard on 127.0.0.1:8090; reads runs off disk
 ./.venv/bin/python -m web.server --operator  # same page on :8091, but it can start a drill
 cd lab && ./selftest.sh                      # Leakbox lane; needs a Docker daemon
