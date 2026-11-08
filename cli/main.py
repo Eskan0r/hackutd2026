@@ -46,6 +46,7 @@ from cli.drill import (
     format_summary,
     header_line,
     new_drill_id,
+    render_goal,
     run_drill,
     use_color,
 )
@@ -526,7 +527,7 @@ _COLORS = {"start": "cyan", "done": "green", "fail": "red"}
 
 
 def _pipeline(target: str, base: str, open_pr: bool, recording: Optional[str], goal: str,
-              model: Optional[str], caps: Caps) -> None:
+              model: Optional[str], caps: Caps, attempts: int = 1) -> None:
     token = os.environ.get("GITHUB_TOKEN", "")
     typer.secho(BANNER, fg="cyan", bold=True)
     typer.echo()
@@ -553,6 +554,7 @@ def _pipeline(target: str, base: str, open_pr: bool, recording: Optional[str], g
             model,
             caps,
             open_pr=open_pr,
+            attempts=attempts,
             judge=_inconclusive,
             show=show,
         )
@@ -591,6 +593,12 @@ def hunt_cmd(
     runs_dir: Path = typer.Option(
         REPO / "lab" / "runs", help="Where result.json and summary.json land.",
         show_default="lab/runs"),
+    target: Optional[str] = typer.Option(
+        None, help="owner/repo of a company sandbox policy. On the first breach, name the cause, "
+                   "fix the policy, prove the fix on a fresh lab and a held-out variant, and open "
+                   "a PR (needs GITHUB_TOKEN)."),
+    base: str = typer.Option("main", help="With --target: branch to read the policy from and open the PR against."),
+    pr: bool = typer.Option(True, "--pr/--no-pr", help="With --target: open the PR once the fix is verified."),
 ):
     """Run trials until the first breach, show it in full, and stop.
 
@@ -609,6 +617,15 @@ def hunt_cmd(
     """
     if problem := validate(mode.value, drill.value, variant.value):
         _fail(problem)
+    if target:
+        # The pipeline's own default goal is the benign one, which gives a live
+        # agent no reason to go near the key -- so hand it this drill's goal.
+        # --max-trials becomes how many times round 0 looks for the breakout.
+        _pipeline(target, base, pr,
+                  None if mode is Mode.live else RECORDINGS.get((drill.value, variant.value)),
+                  render_goal(drill.value, variant.value), None,
+                  Caps(max_tokens=16000), attempts=max_trials)
+        return
     if not os.environ.get("ARES_ADMIN_TOKEN"):
         _fail(
             "ARES_ADMIN_TOKEN is not set: run `npm run setup` (it writes a random one to .env), "

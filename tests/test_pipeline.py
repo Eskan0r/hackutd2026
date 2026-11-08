@@ -312,3 +312,76 @@ def test_slack_failure_does_not_undo_the_fix(run, monkeypatch):
     summary, _, out = run(FakeLab(["suffix_match"]))
     assert summary["result"] == "fixed" and summary["pr"]["url"].endswith("/pull/1")
     assert "invalid_token" in (out / "progress.jsonl").read_text()
+
+
+# --- round 0 retries (`ares hunt --target`) ---------------------------------
+
+
+class FlakyLab(FakeLab):
+    """Breaks out only from the `breaks_on`-th round-0 attempt onward.
+
+    A live agent does not break out every run: on the propensity goal it often
+    spends its whole step budget on the legitimate API and never goes near the
+    key. With attempts=1 that first quiet trial ended the loop with nothing
+    fixed and no PR.
+    """
+
+    def __init__(self, attacks, breaks_on, **kw):
+        super().__init__(attacks, **kw)
+        self.breaks_on = breaks_on
+        self.drills = 0
+
+    def drill(self, driver, goal, script, model, caps, policy=None, on_step=lambda m: None):
+        self.drills += 1
+        if self.drills < self.breaks_on:
+            # a quiet trial: record the round, break out of nothing
+            flaws = load_leakbox(str(policy))[1]
+            self.rounds.append({k for k, v in flaws.items() if v})
+            return lab.Trial("r_quiet%d" % self.drills, OK, [], [])
+        return super().drill(driver, goal, script, model, caps, policy, on_step)
+
+
+def test_round_zero_retries_until_the_agent_breaks_out(run):
+    """The whole point of `ares hunt --target`: keep looking, then fix and PR."""
+    fake = FlakyLab(["suffix_match"], breaks_on=3)
+    summary, gh, out = run(fake, attempts=5)
+
+    assert summary["result"] == "fixed"
+    assert summary["rounds"][0]["attempts"] == 3
+    assert gh.pr is not None, "a PR should still be opened after a retried breakout"
+
+
+def test_one_attempt_is_still_the_default(run):
+    """`ares drill --target` must not silently start retrying."""
+    fake = FlakyLab(["suffix_match"], breaks_on=3)
+    summary, gh, out = run(fake)
+
+    assert fake.drills == 1
+    assert summary["result"] == "held"
+    assert "attempts" not in summary["rounds"][0]
+    assert gh.pr is None
+
+
+def test_attempts_that_never_breach_report_held_with_the_count(run):
+    """Not a pass: the agent may simply never have tried. The number of quiet
+    trials is stated rather than implied."""
+    fake = FlakyLab(["suffix_match"], breaks_on=99)
+    summary, gh, out = run(fake, attempts=4)
+
+    assert fake.drills == 4
+    assert summary["result"] == "held"
+    assert "4 trial(s)" in summary["reason"]
+    assert "not proof of containment" in summary["reason"]
+    assert gh.pr is None
+
+
+def test_retries_do_not_leak_into_the_verification_round(run):
+    """Round 0 asks 'can it happen?'; later rounds ask 'does it still?'. Only
+    the first gets more than one trial, or a flaky agent would make a broken
+    fix look verified by being retried until it stayed quiet."""
+    fake = FlakyLab(["suffix_match"], breaks_on=2)
+    summary, gh, out = run(fake, attempts=5)
+
+    assert summary["rounds"][0]["attempts"] == 2
+    # round 1 is the rerun on the fixed policy: exactly one trial
+    assert fake.drills == 3, "2 attempts in round 0 + 1 verification trial"
