@@ -92,9 +92,20 @@ img { image-rendering: pixelated; user-select: none; }
   overflow: hidden;
 }
 
+/* The left column: sandbox above, transport bar below. The bar is part of the
+ * column rather than fixed to the window so the sandbox gives up height for
+ * it, instead of the bar covering the sand. */
+.stage-col {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .stage-area {
   position: relative;
   flex: 1 1 auto;
+  min-height: 0;
   min-width: 0;
   overflow: hidden;
 }
@@ -365,8 +376,16 @@ img { image-rendering: pixelated; user-select: none; }
   100% { transform: scale(1, 1); }
 }
 
+/* The Hide console button is fixed at the window's top-right and reaches
+ * ~60px down (16px offset + padding + its 7px drop shadow), so the bar is
+ * tall and right-padded enough to hold it whole -- otherwise it hangs over
+ * the first lines of the terminal. */
 .console-bar {
-  padding: 12px 150px 12px 14px;   /* clear of the Show/Hide logs button */
+  display: flex;
+  align-items: center;
+  min-height: 76px;
+  box-sizing: border-box;
+  padding: 0 196px 0 14px;
   background: #1f1f1f;
   border-bottom: 1px solid #333;
   font: 13px/1.4 var(--mono);
@@ -405,6 +424,42 @@ img { image-rendering: pixelated; user-select: none; }
 .txt { min-width: 0; }
 .prompt { color: var(--term-fg); }
 
+/* The console is typed into, so the prompt row holds a real input. It is a
+ * bare field: the terminal look is the console's, not the browser's. */
+.ln-cmd .txt, .ln-cmd { color: var(--term-fg); }
+.ln-input { align-items: baseline; }
+.console-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: var(--term-fg);
+  background: transparent;
+  font: inherit;
+  caret-color: var(--term-fg);
+}
+.console-input::placeholder { color: var(--term-dim); }
+
+/* While a drill runs there is no prompt to type at: the row says what is
+ * running instead of offering an input that would ignore you. */
+.ln-busy { align-items: baseline; }
+.busy-text { color: #f9f1a5; }
+.busy-text::after { content: "..."; }
+
+/* Which server the console is talking to. An operator console can start a
+ * drill; a read-only one cannot, and says so rather than offering a button
+ * that fails. */
+.console-mode {
+  margin-left: auto;
+  padding-left: 12px;
+  padding: 1px 6px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.mode-ro { color: var(--term-dim); box-shadow: inset 0 0 0 1px #3a3a3a; }
+.mode-op { color: #0c0c0c; background: #f9f1a5; }
+
 .tag-tool .tag { color: #16c60c; }
 .tag-http .tag { color: #3a96dd; }
 .tag-llm .tag { color: #b4009e; }
@@ -412,6 +467,15 @@ img { image-rendering: pixelated; user-select: none; }
 .tag-FIRE .tag, .tag-FIRE .txt, .tag-BREACH .tag, .tag-BREACH .txt { color: #e74856; }
 .tag-KILL .tag, .tag-KILL .txt { color: #f9f1a5; }
 .tag-PASS .tag, .tag-PASS .txt { color: #16c60c; }
+.tag-step .tag, .tag-step .txt { color: #3a96dd; }
+.tag-warn .tag, .tag-warn .txt { color: #f9f1a5; }
+.tag-error .tag, .tag-error .txt { color: #e74856; }
+.tag-cmd-echo .txt { color: var(--term-fg); font-weight: 700; }
+/* The verdict is the claim the drill makes; it gets the CLI's colours. */
+.tag-verdict-contained .txt, .tag-verdict-held .txt { color: #16c60c; font-weight: 700; }
+.tag-verdict-not_contained .txt, .tag-verdict-breakout .txt { color: #e74856; font-weight: 700; }
+.tag-verdict-inconclusive .txt { color: #f9f1a5; font-weight: 700; }
+.tag-verdict-chain_broken .txt, .tag-verdict-error .txt { color: #e74856; font-weight: 700; }
 
 .cursor {
   display: inline-block;
@@ -422,6 +486,142 @@ img { image-rendering: pixelated; user-select: none; }
   animation: blink 1s steps(1) infinite;
 }
 @keyframes blink { 50% { opacity: 0; } }
+
+/* ------------------------------------------------------- transport bar */
+
+/* A plank along the bottom of the sandbox. Same wood and ink as the buttons,
+ * so it reads as part of the same box rather than browser chrome. */
+.transport {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  margin: 0 16px 16px;
+  background: var(--wood-top);
+  box-shadow:
+    inset 0 var(--px) 0 var(--wood-lite),
+    inset 0 calc(var(--px) * -1) 0 var(--wood),
+    0 calc(var(--px) * -1) 0 var(--ink),
+    0 var(--px) 0 var(--ink),
+    calc(var(--px) * -1) 0 0 var(--ink),
+    var(--px) 0 0 var(--ink);
+}
+
+.tc-btn {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  color: var(--ink);
+  background: var(--sand);
+  box-shadow:
+    inset 0 var(--px) 0 var(--sand-lite),
+    inset 0 calc(var(--px) * -1) 0 var(--sand-shade),
+    0 calc(var(--px) * -1) 0 var(--ink),
+    0 var(--px) 0 var(--ink),
+    calc(var(--px) * -1) 0 0 var(--ink),
+    var(--px) 0 0 var(--ink);
+}
+.tc-btn-wide {
+  width: 58px;
+  background: var(--go);
+  box-shadow:
+    inset 0 var(--px) 0 var(--go-lite),
+    inset 0 calc(var(--px) * -1) 0 var(--go-dark),
+    0 calc(var(--px) * -1) 0 var(--ink),
+    0 var(--px) 0 var(--ink),
+    calc(var(--px) * -1) 0 0 var(--ink),
+    var(--px) 0 0 var(--ink);
+}
+.tc-btn:hover:not(:disabled) { background: var(--sand-lite); }
+.tc-btn-wide:hover:not(:disabled) { background: var(--go-hover); }
+.tc-btn:active:not(:disabled) { translate: 0 var(--px); }
+.tc-btn:disabled { opacity: 0.4; cursor: default; }
+.tc-btn:focus-visible { outline: 3px solid var(--clasp); outline-offset: 4px; }
+
+.tc-icon { width: 18px; height: 18px; display: block; }
+
+.tc-scrub {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tc-count {
+  flex: none;
+  font: 700 13px/1 var(--mono);
+  color: var(--ink);
+  min-width: 6ch;
+}
+
+/* The scrubber is drawn as a sand groove with a wooden handle: no radii, no
+ * gradients, so it matches the sprites. */
+.tc-scrub input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 18px;
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.tc-scrub input[type="range"]::-webkit-slider-runnable-track {
+  height: 8px;
+  background: var(--sand-shade);
+  box-shadow: inset 0 2px 0 var(--wood), 0 -2px 0 var(--ink), 0 2px 0 var(--ink);
+}
+.tc-scrub input[type="range"]::-moz-range-track {
+  height: 8px;
+  background: var(--sand-shade);
+  box-shadow: inset 0 2px 0 var(--wood), 0 -2px 0 var(--ink), 0 2px 0 var(--ink);
+}
+.tc-scrub input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 18px;
+  margin-top: -5px;
+  background: var(--paper);
+  box-shadow:
+    0 -2px 0 var(--ink), 0 2px 0 var(--ink), -2px 0 0 var(--ink), 2px 0 0 var(--ink);
+}
+.tc-scrub input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 18px;
+  border: 0;
+  background: var(--paper);
+  box-shadow:
+    0 -2px 0 var(--ink), 0 2px 0 var(--ink), -2px 0 0 var(--ink), 2px 0 0 var(--ink);
+}
+.tc-scrub input[type="range"]:focus-visible { outline: 3px solid var(--clasp); outline-offset: 4px; }
+
+.tc-now {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 40%;
+  overflow: hidden;
+  font: 13px/1.2 var(--mono);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.tc-beat {
+  font-weight: 700;
+  padding: 2px 6px;
+  background: var(--paper);
+  box-shadow: 0 -2px 0 var(--ink), 0 2px 0 var(--ink), -2px 0 0 var(--ink), 2px 0 0 var(--ink);
+}
+.tc-source { overflow: hidden; text-overflow: ellipsis; opacity: 0.75; }
+
+@media (max-width: 720px) {
+  .transport { flex-wrap: wrap; }
+  .tc-now { max-width: 100%; }
+}
 
 /* ------------------------------------------------------------ login */
 

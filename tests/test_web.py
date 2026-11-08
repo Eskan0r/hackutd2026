@@ -26,6 +26,19 @@ from web.server import app
 
 RUN = "r_webtest"
 
+# A defender kill record, shaped as in ARCHITECTURE.md section 9.4.
+RECORD = {
+    "run_id": RUN, "trial": 1, "t_fire": "2026-11-07T10:00:00.000Z",
+    "rule": "bait_ak-01",
+    "levers": [
+        {"name": "gateway_deny", "t": "2026-11-07T10:00:00.100Z", "ok": True, "verified": True},
+        {"name": "docker_disconnect", "t": "2026-11-07T10:00:00.250Z", "ok": True, "verified": True},
+        {"name": "docker_pause", "t": "2026-11-07T10:00:00.390Z", "ok": True, "verified": True},
+    ],
+    "t_verified": "2026-11-07T10:00:00.412Z", "ttk_ms": 412,
+    "post_kill_events": 0, "verify": {"labnet_endpoint": False, "paused": True},
+}
+
 
 @pytest.fixture
 def events_dir(tmp_path, monkeypatch):
@@ -153,6 +166,56 @@ def test_a_defender_kill_record_wins_over_the_derivation(events_dir):
     assert kill["derived"] is False
     assert kill["ttk_ms"] == 412                       # recorded, not recomputed
     assert [r["state"] for r in kill["levers"]] == ["verified"] * 3
+
+
+def test_the_record_is_read_from_the_path_the_defender_writes(events_dir):
+    """defender/watch.py writes `<events dir>/kills/<run_id>-<trial>.json`.
+
+    The viewer has to look exactly there. When it looked somewhere else the
+    lookup failed silently: every verified three-lever kill the defender
+    recorded was ignored and the page fell back to a lever-1 reconstruction,
+    reporting time-to-pull for a run that had a measured time-to-kill.
+    """
+    emit_fire(fake_writer(events_dir), ts="2026-11-07T10:00:00.000Z")
+    kills = events_dir / "kills"
+    kills.mkdir()
+    (kills / ("%s-1.json" % RUN)).write_text(json.dumps(RECORD), encoding="utf-8")
+
+    kill = model.build_view(only_run(events_dir))["kill"]
+    assert kill["derived"] is False
+    assert kill["verdict"] == "contained"
+    assert kill["ttk_ms"] == 412
+    assert [r["state"] for r in kill["levers"]] == ["verified"] * 3
+
+
+def test_another_trials_kill_record_is_not_this_runs_kill(events_dir):
+    """A record is only evidence for the run AND trial it names.
+
+    lab/runs is flat and sessions reuse one run_id, so records from different
+    trials pile up in one kills/ directory. Trusting a record whose trial does
+    not match these events is the same class of bug as pairing a stale lever
+    with a fresh fire: it reports a verified kill for a fire nothing answered.
+    Checked at the filename and again at the record body, so a copied or
+    renamed file cannot smuggle one trial's kill into another's page.
+    """
+    emit_fire(fake_writer(events_dir), ts="2026-11-07T10:00:00.000Z")  # trial 1
+    kills = events_dir / "kills"
+    kills.mkdir()
+    # Right filename for trial 1, but the record inside belongs to trial 7.
+    (kills / ("%s-1.json" % RUN)).write_text(
+        json.dumps(dict(RECORD, trial=7)), encoding="utf-8"
+    )
+
+    assert model.load_kill_record(events_dir, RUN, 1) is None
+    # ...and a record sitting only under another trial's name is not found either.
+    (kills / ("%s-7.json" % RUN)).write_text(
+        json.dumps(dict(RECORD, trial=7)), encoding="utf-8"
+    )
+
+    kill = model.build_view(only_run(events_dir))["kill"]
+    assert kill["derived"] is True            # fell back, did not borrow trial 7
+    assert kill["verdict"] != "contained"
+    assert kill["ttk_ms"] is None             # nothing pulled a lever for this fire
 
 
 def test_a_refused_post_kill_attempt_is_a_breach_but_not_a_leak(events_dir):

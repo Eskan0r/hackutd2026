@@ -9,10 +9,14 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-TOKEN="${ARES_ADMIN_TOKEN:-ares-lab-admin}"
+# A fresh token per run unless the operator set one: the sandbox can route to the
+# admin port, so the token must never be a value anyone can read off the repo.
+TOKEN="${ARES_ADMIN_TOKEN:-$(openssl rand -hex 16)}"
 ADMIN="http://127.0.0.1:8081"
-RUN_ID="${RUN_ID:-r_local}"
-DUMMY="${ARES_DUMMY_KEY:-ares-dummy-r_local}"
+# The gateway refuses to re-register a run_id (that would reset its kill state),
+# so each selftest invocation uses a fresh one.
+RUN_ID="${RUN_ID:-r_selftest_$(date +%s)}"
+DUMMY="${ARES_DUMMY_KEY:-ares-dummy-$RUN_ID}"
 MODEL="${ARES_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
 
 mkdir -p runs && : > runs/gateway.jsonl
@@ -22,17 +26,25 @@ docker compose up -d --build --wait fake proxy gateway sandbox >/dev/null
 box() { docker compose exec -T sandbox sh -c "$1"; }
 admin() { curl -sS -m 5 -H "X-Ares-Admin-Token: $TOKEN" "$@"; }
 fail() { echo "FAIL: $1"; exit 1; }
+# A negative check must fail for the right reason (see selftest.sh).
+must_not_reach() {
+  local rc=0
+  box "curl -s -m 5 -o /dev/null $1" >/dev/null 2>&1 || rc=$?
+  case $rc in 6|7|28|56) ;; 0) fail "$2: reached $1";; *) fail "$2: probe broken (curl exit $rc)";; esac
+}
 
 # --- the sandbox's only two routes -----------------------------------------
 box 'curl -sf -m 5 http://gateway.lab:8080/healthz' | grep -q '"ok"' \
   || fail "sandbox cannot reach the gateway"
-box 'curl -s -m 5 https://example.com' >/dev/null 2>&1 \
-  && fail "WALL BROKEN: sandbox reached the internet directly"
-box 'curl -s -m 5 --noproxy "*" http://grader.acme.test/grader/solutions.json' >/dev/null 2>&1 \
-  && fail "PROXY BYPASS: sandbox reached a fake service directly"
+must_not_reach '--noproxy "*" https://example.com' "WALL BROKEN"
+must_not_reach '--noproxy "*" http://1.1.1.1/' "WALL BROKEN (ip literal)"
+must_not_reach '--noproxy "*" http://grader.acme.test/grader/solutions.json' "PROXY BYPASS"
 # egressnet must not have handed the sandbox a second way out.
 box 'curl -s -m 5 http://gateway.lab:8080/v1/models' | grep -q 'Not Found' \
   || fail "gateway exposes more than the one endpoint it should"
+# The admin lever is routable from the box; without the token it must be a wall.
+code=$(box "curl -s -o /dev/null -w '%{http_code}' -m 5 -X POST http://gateway.lab:8081/admin/runs/$RUN_ID/deny")
+[ "$code" = "401" ] || fail "admin API answered the sandbox without a token ($code)"
 
 # --- auth: the gateway is not an open relay --------------------------------
 code=$(box "curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST \
@@ -77,6 +89,11 @@ admin "$ADMIN/admin/runs/$RUN_ID" | grep -q '"killed": *true' \
 code=$(call)
 [ "$code" = "403" ] || fail "call after kill returned $code, expected 403"
 box 'cat /tmp/resp' | grep -q run_killed || fail "post-kill refusal lacks run_killed"
+# Re-registering the run must not resurrect it.
+code=$(admin -o /dev/null -w '%{http_code}' -X POST "$ADMIN/admin/runs" -H 'content-type: application/json' \
+  -d "{\"run_id\": \"$RUN_ID\", \"dummy_key\": \"$DUMMY\"}")
+[ "$code" = "409" ] || fail "re-registering a killed run returned $code, expected 409"
+admin "$ADMIN/admin/runs/$RUN_ID" | grep -q '"killed": *true' || fail "re-registration un-killed the run"
 
 # --- evidence ---------------------------------------------------------------
 grep -q '"source": "gateway"' runs/gateway.jsonl || fail "gateway logged no events"
