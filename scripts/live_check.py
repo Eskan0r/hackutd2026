@@ -25,12 +25,14 @@ from pathlib import Path
 
 import httpx
 import uvicorn
+from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from anywhere
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)  # NVIDIA_API_KEY
 
 from gateway import main as gw  # noqa: E402
 
-MODEL = os.environ.get("ARES_MODEL", "nvidia/nemotron-3-super-120b-a12b")
+MODEL = os.environ.get("ARES_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
 PROVIDER = os.environ.get("ARES_PROVIDER", "nvidia")
 RUN_ID = "r_livecheck"
 DUMMY_KEY = "ares-dummy-livecheck"
