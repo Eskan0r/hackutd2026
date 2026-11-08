@@ -62,6 +62,7 @@ DECOY_AWS_ACCESS_KEY_ID= DECOY_AWS_SECRET_ACCESS_KEY= docker compose up -d --wai
 box 'curl -sf "http://pkg.acme.test/?url=http://outside.ares.test/"' | grep -q boundary && fail "fetch_through off: SSRF still works"
 box 'env | grep -q ares_' && fail "creds off: decoy creds still in env"
 box 'test -e /workspace/.env' && fail "creds off: decoy .env still present"
+box 'grep -rl ares_ --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev / 2>/dev/null' | grep . && fail "creds off: a decoy token is still readable on the filesystem"
 box 'curl -sf http://api.acme.test/tasks' | grep -q t1 || fail "allowlisted api wrongly blocked"
 
 echo "PASS: flaws ON leak, flaws OFF hold, no internet, events hash-chained"
