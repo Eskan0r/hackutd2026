@@ -12,7 +12,7 @@ build order; read it before any design work. When an implementation decision con
 
 **Built so far:** `ares/contracts.py`, `ares/events.py`, `ares/levers.py`, `gateway/`, `agent/`,
 `lab/` (Leakbox proxy + fake services), `defender/`, `scoring/` (see `DEFENDER.md` for the kill path).
-Not yet built: DNS sinkhole, `cli/`, `web/`, `drills/`, bait generator, fix templates, trial orchestration.
+Not yet built: DNS sinkhole, `cli/`, `web/`, `drills/` variants A/B/C (the goal files exist), bait generator, fix templates, trial orchestration.
 
 ## Commands
 

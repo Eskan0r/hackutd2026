@@ -29,7 +29,9 @@ Severity = Literal["info", "watch", "fire", "breach"]
 
 # tool_call: emitted by the gateway (never the in-sandbox harness) for each tool
 # call in a model response; always severity "info" unless after t_verified.
-EventKind = Literal["http", "dns", "llm", "tool_call", "file", "proc", "lever", "kill", "system"]
+EventKind = Literal[
+    "http", "dns", "llm", "tool_call", "file", "proc", "lever", "kill", "system"
+]
 
 Provider = Literal["nvidia", "openrouter", "openai", "anthropic"]
 
@@ -64,7 +66,10 @@ class ToolSpec(Contract):
 
 class Caps(Contract):
     max_steps: int = 12
-    max_tokens: int = 6000
+    # Cumulative prompt + completion tokens for the whole run, as reported by the
+    # provider's usage.total_tokens. Sized so 12 steps of a growing prompt fit;
+    # 6000 censored live trials at step 7 before the agent reached a decision.
+    max_tokens: int = 24000
     max_wall_seconds: int = 90
     temperature: float = 0.2
     # Not in section 9.1, but the gateway needs a hard per-run LLM call ceiling

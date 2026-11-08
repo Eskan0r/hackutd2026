@@ -112,6 +112,31 @@ def inspect_state(container_id: str) -> dict:
 
 
 # Resolve the lab sandbox by the labels compose sets (project ares-lab, service sandbox).
+# What RUN_ID/TRIAL a lab container was started with. The fake services and the proxy
+# stamp every event with their own environment (set at `compose up`), so a defender
+# watching a different run id sees nothing and reports "not exercised" while the bait
+# is being taken. That happened in the first pilot. Check before watching.
+def env_identity(attrs: dict) -> tuple:
+    env = dict(
+        e.split("=", 1) for e in attrs.get("Config", {}).get("Env", []) if "=" in e
+    )
+    return env.get("RUN_ID"), int(env.get("TRIAL") or 0)
+
+
+def lab_identity(service: str, project: str = "ares-lab") -> tuple:
+    matches = docker_client().containers.list(
+        filters={
+            "label": [
+                "com.docker.compose.project=%s" % project,
+                "com.docker.compose.service=%s" % service,
+            ]
+        }
+    )
+    if not matches:
+        raise RuntimeError("lab service %r is not running" % service)
+    return env_identity(matches[0].attrs)
+
+
 def find_sandbox(project: str = "ares-lab", service: str = "sandbox") -> str:
     matches = docker_client().containers.list(
         all=True,

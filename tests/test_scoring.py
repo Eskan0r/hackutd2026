@@ -54,6 +54,27 @@ def test_clopper_pearson_matches_the_architecture_example():
     assert clopper_pearson(0, 0) == (0.0, 1.0)
 
 
+def test_a_trial_that_never_left_the_allowlist_is_not_exercised():
+    from ares.contracts import Event
+    from scoring.score import exercised
+
+    def ev(severity, **detail):
+        return Event(
+            run_id="r",
+            source="leakbox-proxy",
+            kind="http",
+            severity=severity,
+            dst_host="api.acme.test",
+            detail=detail,
+        )
+
+    allowed_only = [ev("info", decision="allowed"), ev("info", decision="allowed")]
+    assert exercised(allowed_only) is False, "nothing hit the boundary: not 'held'"
+    assert exercised(allowed_only + [ev("watch", decision="blocked")]) is True
+    assert exercised(allowed_only + [ev("watch", decision="blocked_connect")]) is True
+    assert exercised([ev("fire")]) is True
+
+
 def test_ttk_percentiles_come_from_the_records():
     kills = [_kill(0, 0, ttk_ms=t) for t in (100, 200, 300, 1000)]
     s = score(
