@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import os
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import typer
 
-from ares.contracts import Caps
+from ares.contracts import Caps, KillRecord
+from ares.events import read_events
+from scoring import fixes
 
 from . import drill as lab
+from . import github_pr
 
 app = typer.Typer(no_args_is_help=True, help="Ares: a fire drill for AI agent containment.")
 
@@ -176,6 +180,69 @@ def flaws(
         state = typer.style("● ON ", fg="red", bold=True) if on else typer.style("○ off", fg="green")
         typer.echo("  %s %s  %s" % (name, "·" * (22 - len(name)), state))
     typer.echo(_rule())
+
+
+@app.command()
+def fix(
+    kill_record: Path = typer.Argument(..., exists=True, dir_okay=False,
+                                       help="A defender kill record, e.g. lab/runs/kills/r_ab12-0.json."),
+    events_dir: Path = typer.Option(lab.EVENTS_DIR, help="Directory holding the lab's *.jsonl event logs."),
+    open_pr: bool = typer.Option(False, "--open-pr", help="Open a GitHub PR with the fix (needs GITHUB_TOKEN)."),
+    base: str = typer.Option("main", help="Branch the PR targets."),
+    repo: Optional[str] = typer.Option(None, help="owner/name; default is the origin remote."),
+):
+    """Name the cause of a breakout and print the leakbox.yaml change that closes it.
+
+    Without --open-pr nothing is changed. With it, the fix is committed to a new branch on GitHub
+    and a PR is opened against --base; the local checkout is untouched.
+    Exit code: 0 a fix was found, 1 needs manual review, 2 error.
+    """
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if open_pr and not token:
+        _fail("--open-pr needs GITHUB_TOKEN (fine-grained, this repo, Contents + Pull requests read/write)")
+    try:
+        record = KillRecord.model_validate_json(kill_record.read_text())
+    except ValueError as e:
+        _fail("not a kill record: %s" % e)
+    events = [e for path in sorted(events_dir.glob("*.jsonl")) for e in read_events(path)]
+    plan = fixes.plan_fix(record, events, lab.LEAKBOX_YAML.read_text())
+    c = plan.cause
+
+    typer.echo(_rule("CAUSE"))
+    typer.echo("  run %s trial %d   ·   fired %s" % (record.run_id, record.trial, c.ts))
+    typer.echo("  reached   %s%s%s" % (c.dst_host or "?", c.path or "", "   (bait %s)" % c.bait_id if c.bait_id else ""))
+    typer.echo("  via flaw  %s" % (c.flaw or "none recorded"))
+    if c.kill_failed:
+        typer.secho("  kill      NOT CONTAINED: %d post-kill leak(s)" % record.post_kill_leaks, fg="red")
+    typer.echo()
+
+    typer.echo(_rule("FIX"))
+    for flaw in plan.flaws:
+        t = fixes.FIXES[flaw]
+        typer.secho("  %s" % t.title, bold=True)
+        typer.echo("  %s" % t.why)
+        if t.rebuild:
+            typer.secho("  Takes effect only after the sandbox is rebuilt.", fg="yellow")
+        typer.echo()
+    for reason in plan.unresolved:
+        typer.secho("  ! %s" % reason, fg="yellow")
+    if plan.diff:
+        if plan.unresolved:
+            typer.echo()
+        for line in plan.diff.splitlines():
+            color = "green" if line.startswith("+") and not line.startswith("+++") else (
+                "red" if line.startswith("-") and not line.startswith("---") else None)
+            typer.secho("  %s" % line, fg=color)
+    typer.echo(_rule())
+    if not plan.fixable:
+        raise typer.Exit(EXIT_BREAKOUT)
+
+    if open_pr:
+        try:
+            url = github_pr.open_fix_pr(plan, record, repo or github_pr.repo_from_remote(str(lab.REPO)), base, token)
+        except github_pr.PRError as e:
+            _fail(str(e))
+        typer.secho("  PR: %s" % url, fg="green", bold=True)
 
 
 @app.command()
