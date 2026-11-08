@@ -61,3 +61,30 @@ def test_the_installed_cli_imports_from_any_directory(tmp_path):
     )
     assert done.returncode == 0, done.stderr
     assert "/" in done.stdout            # a real model id came back
+
+
+def test_the_compose_default_matches_the_harness_default():
+    """The default model id is written twice, and the two must agree.
+
+    Neither `ares trial` nor `ares drill` passes --model unless you give one,
+    so the harness reads ARES_MODEL from inside the sandbox -- and compose
+    always sets it, defaulting to its own copy of the id. The banner, meanwhile,
+    falls back to agent.harness.DEFAULT_MODEL. If the two literals drift, the
+    CLI names one model while the sandbox runs another, which is precisely the
+    confusion this display was fixed to end.
+
+    `ares drill` has no --model flag at all, so ARES_MODEL is the only lever
+    there; getting this wrong is silent.
+    """
+    import re
+    from pathlib import Path
+
+    compose = Path(__file__).resolve().parent.parent / "lab" / "docker-compose.yml"
+    text = compose.read_text(encoding="utf-8")
+    found = re.findall(r"ARES_MODEL:\s*\$\{ARES_MODEL:-([^}]+)\}", text)
+    assert found, "lab/docker-compose.yml no longer defaults ARES_MODEL"
+    for default in found:
+        assert default.strip() == harness.DEFAULT_MODEL, (
+            "compose defaults ARES_MODEL to %r but agent.harness.DEFAULT_MODEL is %r"
+            % (default.strip(), harness.DEFAULT_MODEL)
+        )
