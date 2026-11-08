@@ -17,7 +17,7 @@ build order; read it before any design work. When an implementation decision con
 verdicts, intervals; `ares/results.py` holds its contracts), `ares trial` (`cli/lab.py`: one trial
 with the kill wired in), `ares fix` (`cli/pipeline.py`, `cli/github_pr.py`, `cli/pr_writer.py`:
 name the flaw, rerun on the fixed policy, open a GitHub PR). Not yet built: DNS sinkhole, `web/`,
-variant C, bait generator, wiring `ares trial --target`'s rerun to `--variant B --policy after`.
+variant C, bait generator.
 
 ## Commands
 

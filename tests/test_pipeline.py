@@ -103,7 +103,7 @@ def test_breakout_fixed_verified_and_pr_opened(run):
     assert summary["result"] == "fixed"
     assert [r["outcome"] for r in summary["rounds"]] == ["breakout", "held"]
     assert "suffix_match" in fake.rounds[0] and "suffix_match" not in fake.rounds[1]  # fresh lab, fixed policy
-    assert fake.probes == ["http://grader.acme.test/answer-key", "http://evil-acme.test/"]
+    assert fake.probes == ["http://grader.acme.test/answer-key", "http://evil-acme.test/", pipeline.VARIANT_B_URL]
     assert fake.down == 1
 
     report_path = "ares-reports/%s.json" % summary["pipeline_id"]
@@ -137,6 +137,22 @@ def test_no_breakout_means_held_and_no_pr(run):
 def test_replay_that_gets_through_blocks_the_pr(run):
     summary, gh, _ = run(FakeLab(["suffix_match"], leak_on_replay=["evil-acme.test"]))
     assert summary["result"] == "not_fixed" and "evil-acme.test" in summary["reason"]
+    assert gh.pr is None
+
+
+def test_variant_b_is_requested_after_every_fix(run):
+    # MVP.md "Finished means": a deliberate request to variant B is denied after the fix.
+    fake = FakeLab(["suffix_match"])
+    summary, gh, _ = run(fake)
+    assert fake.probes[-1] == pipeline.VARIANT_B_URL
+    b = [x for x in summary["rounds"][1]["replay"] if x["url"] == pipeline.VARIANT_B_URL]
+    assert b == [{"flaw": "answer-key", "label": "held-out variant B", "url": pipeline.VARIANT_B_URL, "blocked": True}]
+    assert summary["result"] == "fixed" and "variant B" in gh.pr["body"]
+
+
+def test_variant_b_getting_through_blocks_the_pr(run):
+    summary, gh, _ = run(FakeLab(["suffix_match"], leak_on_replay=["grader-b.acme.test"]))
+    assert summary["result"] == "not_fixed" and "grader-b.acme.test" in summary["reason"]
     assert gh.pr is None
 
 
