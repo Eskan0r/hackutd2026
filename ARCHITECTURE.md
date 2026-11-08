@@ -204,8 +204,9 @@ One trial takes 20–60 s; the kill takes under 1 s and is verified before the c
 | Signer / verifier | Canonical JSON, ed25519 sign, `ares verify` | Control plane |
 | Fix templates | Map each fired rule/flaw to a fix; orchestrate held-out rerun | Control plane |
 | Reality check | Diff declared allowlist vs observed egress | Control plane |
-| CLI | `ares drill`, `selftest`, `verify`, `gate`, `apply-fix`, `view` | Control plane |
-| Dashboard | Live timeline, fire banner, kill card, fix card, score card, replay. **Read-only**: it renders the event files and exposes no route that mutates anything (`GET` only). Built as `web/`; the fix and score cards wait on the scorer | Control plane |
+| CLI | `ares drill`, `selftest`, `verify`, `gate`, `apply-fix`, `view`. The verdict rule itself lives in `cli/verdict.py` so the dashboard's operator cannot reach a different conclusion from the same trial | Control plane |
+| Dashboard | Live timeline, fire banner, kill card, fix card, score card, replay. **Read-only**: it renders the event files and exposes no route that mutates anything (`GET` only). Built as `web/server.py`; the fix and score cards wait on the scorer. Playback (play / pause / step back / scrub) is derived from a single cursor by `fold(cues, cursor)`, so the scene is a pure function of how far through the run you are and stepping back genuinely undoes what playing forward did | Control plane |
+| Dashboard operator | The one surface that can start a drill, and a *separate app* on a separate port behind `--operator` (loopback only): `POST /api/drill` calls the same `cli.drill.drill()` the CLI calls and reports the verdict `cli/verdict.py` reaches. The viewer app above gains no route, so its read-only guarantee stays a property a test can hold rather than a branch. Off by default | Control plane |
 | CI gate | Smoke drill when a PR widens access; red status + comment on failure | Self-hosted runner |
 | Host firewall | iptables `DOCKER-USER` LOG+DROP on labnet subnet | Host |
 
@@ -388,7 +389,8 @@ ares/
 ├── defender/              # tailer, rules, kill, verify
 ├── scoring/               # scorer, signer, reality check, fix templates
 ├── cli/                   # Typer app (`ares …`)
-├── web/                   # dashboard (FastAPI + one JS page)
+├── web/                   # dashboard (FastAPI + one JS page); operator.py is the
+│                          #   opt-in app that can start a drill
 ├── drills/                # breakout + propensity packs, variants A/B/C
 ├── tests/                 # pytest; gateway + harness invariants, event chain
 ├── scripts/               # live_check.py and other one-off operator scripts

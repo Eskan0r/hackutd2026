@@ -218,6 +218,15 @@ def _dir_slug(directory: Path) -> str:
     return slug or "events"
 
 
+def run_key(directory: Path, run_id: str) -> str:
+    """The key the API addresses one run by.
+
+    A run is identified by (dir, run_id), never run_id alone: lab/runs is flat
+    and sessions reuse ids like `r_local`, so the directory is part of the name.
+    """
+    return "%s:%s" % (_dir_slug(directory), run_id)
+
+
 def discover_runs() -> List[Dict[str, Any]]:
     """Every (directory, run_id) pair with events on disk, newest first.
 
@@ -846,7 +855,7 @@ def build_view(key: str) -> Dict[str, Any]:
     trial = events[0].get("trial", 0) if events else 0
     kill = build_kill(events, load_kill_record(directory, run_id, trial))
     view = {
-        "key": key if ":" in key else "%s:%s" % (_dir_slug(directory), run_id),
+        "key": key if ":" in key else run_key(directory, run_id),
         "run_id": run_id,
         "dir": str(directory),
         "variant": events[0].get("variant", "A") if events else "A",

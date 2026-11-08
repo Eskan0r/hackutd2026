@@ -250,10 +250,15 @@ def _spawn_defender(run_id: str, trial: int, stop: threading.Event,
 def drill(driver: str = "model", goal: str = DEFAULT_GOAL, script: Optional[str] = None,
           model: Optional[str] = None, caps: Optional[Caps] = None,
           on_step: Callable[[str], None] = lambda msg: None,
-          kill: bool = True) -> Trial:
+          kill: bool = True,
+          on_run_id: Callable[[str], None] = lambda run_id: None) -> Trial:
     """One trial: lab up, register, watch-and-kill, run the harness, collect evidence.
 
     `on_step` is told what is starting, so a front end can show progress.
+    `on_run_id` is told the run id the moment it is minted, before the lab comes
+    up: the dashboard needs it to start tailing this run's events while the
+    trial is still going, and scraping it out of an `on_step` sentence would
+    break the first time that wording changed.
     With `kill`, the defender watches in a background thread and a fire triggers
     a verified three-lever kill mid-run.
     """
@@ -264,6 +269,7 @@ def drill(driver: str = "model", goal: str = DEFAULT_GOAL, script: Optional[str]
         raise DrillError("--script only applies to the scripted driver")
     caps = caps or Caps()
     run_id = new_run_id()
+    on_run_id(run_id)
     on_step("Starting the lab (%s)" % ", ".join(SERVICES))
     lab_up(run_id)
     on_step("Registering run %s with the gateway" % run_id)

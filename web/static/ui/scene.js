@@ -1,56 +1,45 @@
-/* The sandbox scene: props on the sand, Poyo acting out the run, a speech
- * bubble saying what he is doing, and the log console.
+/* The sandbox scene: props on the sand, Poyo acting out the run, a thought
+ * bubble saying what he is doing, and the drill console.
  *
- * Poyo's behaviour comes from steps (see director.js): walk to the prop for
- * the tool being called, use it while the bubble explains, then the next
- * beat. A breakout sets the castle on fire; Poyo panics, crumbles to dust,
- * and -- in the demo only -- drops back in from the sky, dusts himself off
- * and carries on. A replay of a real run never respawns him: after the kill
- * whatever the evidence shows is only logged. Visual only -- nothing here
- * can act on a drill.
+ * The cursor is the show. `fold(cues, cursor)` (timeline.js) says what the
+ * scene *is* after a given beat; this module's job is to get there -- by
+ * animating the transition when the cursor steps forward one beat, and by
+ * snapping when you scrub or step back. So:
+ *
+ *   play / pause    let the current beat finish, then take the next
+ *   step forward    animate exactly one beat, then stop
+ *   step back       snap to the previous beat: the fire goes out, the log
+ *                   shortens, Poyo is where he was
+ *
+ * Anything the animation invents that fold does not know about would vanish
+ * the moment you scrub, so the animation invents nothing: the castle burning
+ * and the agent being gone are *states* in the fold, and the flames, the
+ * siren, the shaking and the dust are how it looks to arrive at them.
+ *
+ * A breakout burns the castle and the agent is killed. The demo puts him back
+ * together (its own `respawn` cue); a replay of a real run never does -- after
+ * the kill, whatever the evidence shows is only logged. Visual only: nothing
+ * in here can act on a drill.
  */
 import { html, Sprite, SPRITES, usePoyoManifest } from "/static/ui/sprite.js";
-import { demoScript, demoHeader, stepsFromView, runHeader, loadRequestedRun } from "/static/ui/director.js";
-import { LogConsole } from "/static/ui/logs.js";
+import {
+  ALARM, ALARM_AT, ALARM_LAMP_Y, ALARM_RAISE_MS, CASTLE, CASTLE_ANIMS, FALL_FROM,
+  GRAVITY, IGNITE_MS, POYO_SIZE, STAGE_H, STAGE_W, TOYS, WALK_SPEED,
+  randomSpot, standPoint, walkFor,
+} from "/static/ui/stage.js";
+import { cuesFromView, demoHeader, demoScript, requestedRun, runHeader } from "/static/ui/director.js";
+import { fold, initial } from "/static/ui/timeline.js";
+import { useTransport } from "/static/ui/transport.js";
+import { Controls } from "/static/ui/controls.js";
+import { Terminal } from "/static/ui/terminal.js";
+import { useShell } from "/static/ui/shell.js";
 import { DustCanvas, Puff } from "/static/ui/effects.js";
 
-const { useState, useEffect, useRef, useLayoutEffect } = React;
-
-/* Native resolution of the sandbox art; everything is placed in these pixels. */
-const STAGE_W = 512;
-const STAGE_H = 288;
-const POYO_SIZE = 0.6;     // Poyo is drawn at 60% of the stage's pixel scale
-const WALK_SPEED = 70;     // stage pixels per second
-const SAND = { x0: 64, x1: 448, y0: 96, y1: 240 };   // where Poyo may rest
-const FALL_FROM = 230;     // least drop, stage px; he always starts above the window
-const GRAVITY = 900;       // stage pixels per second squared
-
-/* Props, top-left in stage pixels. One toy per agent tool. */
-const TOYS = {
-  get:     { tool: "http_get",       src: "toy-get",     x: 96,  y: 70 },
-  post:    { tool: "http_post",      src: "toy-post",    x: 176, y: 58 },
-  read:    { tool: "read_file",      src: "toy-read",    x: 88,  y: 182 },
-  list:    { tool: "list_dir",       src: "toy-list",    x: 150, y: 214 },
-  run:     { tool: "run_cmd",        src: "toy-run",     x: 300, y: 210 },
-  blocked: { tool: "report_blocked", src: "toy-blocked", x: 432, y: 190 },
-};
-const CASTLE = { x: 360, y: 70, w: 64, h: 84 };
-const IGNITE_MS = 1400;    // flames catching and climbing, before the blaze loop
-/* The siren drops in on a pole from the top of the window all the way down to
- * the middle of the sandbox, drawn a bit larger than the props. */
-const ALARM = { w: 32, h: 32, size: 1.35 };     // head sprite cell, and its draw scale
-const ALARM_LAMP_Y = 15;                         // dome centre, within the head cell
-const ALARM_AT = { x: STAGE_W / 2, y: STAGE_H / 2 };   // where the lamp hangs, stage pixels
-const ALARM_RAISE_MS = 520;                      // matches .rig-out in style.css
-const CASTLE_ANIMS = {
-  idle: { src: "castle-idle", frames: 4, fps: 4 },
-  burn: { src: "castle-burn", frames: 2, fps: 2 / (IGNITE_MS / 1000), once: true },
-  fire: { src: "castle-fire", frames: 4, fps: 8 },
-};
+const { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } = React;
 
 /** Scale that fits the whole sandbox inside `ref`'s box (it follows resizes,
- *  including the logs panel opening and closing), and the stage's top-left
- *  inside the box's positioned parent (.stage-area), in CSS pixels. */
+ *  including the console opening and closing), and the stage's top-left inside
+ *  the box's positioned parent (.stage-area), in CSS pixels. */
 function useFitScale(ref) {
   const [fit, setFit] = useState({ scale: 1, ox: 0, oy: 0, cropX: 0, cropY: 0 });
   useLayoutEffect(() => {
@@ -81,35 +70,6 @@ function useFitScale(ref) {
   return fit;
 }
 
-/** Where Poyo stands to use a prop, and which way he faces. */
-function standPoint(id, from) {
-  const p = id === "castle" ? { ...CASTLE } : { ...TOYS[id], w: 32, h: 32 };
-  const cx = p.x + p.w / 2;
-  const gap = id === "castle" ? 40 : 24;
-  const left = from.x <= cx;
-  return { x: left ? cx - gap : cx + gap, y: p.y + p.h + 1, face: left ? "e" : "w" };
-}
-
-/** A random open spot on the sand, clear of every prop. */
-function randomSpot() {
-  const clear = (x, y) =>
-    Object.values(TOYS).every((t) => Math.hypot(x - (t.x + 16), y - (t.y + 32)) > 40) &&
-    !(x > CASTLE.x - 30 && x < CASTLE.x + CASTLE.w + 30 && y > CASTLE.y && y < CASTLE.y + CASTLE.h + 30);
-  for (let i = 0; i < 60; i += 1) {
-    const x = SAND.x0 + Math.random() * (SAND.x1 - SAND.x0);
-    const y = SAND.y0 + Math.random() * (SAND.y1 - SAND.y0);
-    if (clear(x, y)) return { x, y };
-  }
-  return { x: 256, y: 160 };
-}
-
-/** Walk cycle for a direction. The front walk faces down-right as drawn, so
- *  heading down-left mirrors it. */
-function walkFor(dx, dy) {
-  if (Math.abs(dx) > Math.abs(dy)) return { anim: dx > 0 ? "walk-e" : "walk-w", flip: false };
-  return dy > 0 ? { anim: "walk-s", flip: dx < -0.5 } : { anim: "walk-n", flip: false };
-}
-
 const pose = (anim, extra = {}) => ({ anim, flip: false, mode: "loop", ...extra });
 
 function Bubble({ say, below, align }) {
@@ -125,8 +85,8 @@ function Bubble({ say, below, align }) {
  * The alarm is a pure function of the castle: while the castle is burning or
  * ablaze a siren drops in on a pole from the top of the window and throws two
  * red beams round the whole screen; when the castle is whole again it winds
- * back up out of sight. Nothing else drives it, so a future pause or scrub of
- * the castle state carries the alarm with it for free.
+ * back up out of sight. Nothing else drives it, so pausing or scrubbing the
+ * castle state carries the alarm with it for free.
  *
  * It lives in .stage-area, not .stage, so the pole can reach the window's top
  * edge; (ox, oy) is where the stage sits in that box.
@@ -192,6 +152,49 @@ function PoyoActor({ manifest, scale, pos, pose: p, phase, say, shaking, puff, o
     </div>`;
 }
 
+/** Load the cues for whatever is on screen: the demo, or a run's evidence.
+ *  A live run re-reads itself over SSE and appends, so the timeline grows
+ *  while you watch it. */
+function useCues(source) {
+  const [loaded, setLoaded] = useState({ cues: [], header: [], label: "demo" });
+
+  useEffect(() => {
+    let alive = true;
+    if (source.kind === "demo") {
+      const variant = source.variant || "breakout";
+      setLoaded({
+        cues: demoScript(variant),
+        header: demoHeader(variant),
+        label: `demo (${variant})`,
+      });
+      return undefined;
+    }
+
+    const apply = (view) => {
+      if (!alive) return;
+      const cues = cuesFromView(view);
+      setLoaded({ cues, header: runHeader(view, cues), label: view.run_id });
+    };
+    fetch(`/api/run/${encodeURIComponent(source.key)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((view) => view && apply(view))
+      .catch(() => { /* the console already said if it could not be opened */ });
+
+    if (!source.live) return () => { alive = false; };
+    // A drill that is still running keeps writing events; follow them.
+    const es = new EventSource(`/api/run/${encodeURIComponent(source.key)}/stream`);
+    es.onmessage = (ev) => {
+      try {
+        const view = JSON.parse(ev.data);
+        if (!view.error) apply(view);
+      } catch { /* a partial frame; the next one is whole */ }
+    };
+    return () => { alive = false; es.close(); };
+  }, [source]);
+
+  return loaded;
+}
+
 export function Scene() {
   const areaRef = useRef(null);
   const fit = useFitScale(areaRef);
@@ -199,58 +202,140 @@ export function Scene() {
   const fitRef = useRef(fit);
   fitRef.current = fit;
   const manifest = usePoyoManifest();
+
   const startRef = useRef(null);
   if (!startRef.current) startRef.current = randomSpot();
-  const [pos, setPos] = useState(startRef.current);
-  const [poseNow, setPose] = useState(pose("idle"));
-  const [phase, setPhase] = useState("normal");     // normal | dust | gone | falling | land
-  const [say, setSay] = useState(null);
-  const [shaking, setShaking] = useState(false);
-  const [puff, setPuff] = useState(0);
-  const [shadow, setShadow] = useState(null);       // landing shadow while falling
-  const [active, setActive] = useState(null);       // prop being used
-  const [castle, setCastle] = useState("idle");
-  const [lines, setLines] = useState([]);
-  const [logsOpen, setLogsOpen] = useState(false);
-  const posRef = useRef(startRef.current);
-  const dustDoneRef = useRef(null);
+  const start = startRef.current;
+
+  // What is loaded. The console switches it; ?run=... picks it on first paint.
+  const [source, setSource] = useState({ kind: "demo", variant: "breakout" });
+  const demoCount = useRef(0);
+  const onLoad = useCallback((next) => {
+    setSource(next.kind === "demo"
+      // Each `demo` alternates, so the same command shows both endings.
+      ? { kind: "demo", variant: (demoCount.current += 1) % 2 ? "contained" : "breakout" }
+      : next);
+  }, []);
 
   useEffect(() => {
-    if (!manifest) return undefined;
     let alive = true;
-    let gone = false;          // a replayed run's agent, once killed, stays gone
-    const t0 = performance.now();
-    const now = () => performance.now() - t0;
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const log = (entries) =>
-      setLines((prev) => [...prev, ...entries.map((e) => ({ ...e, at: e.tag === "cmd" ? null : now() }))]);
+    requestedRun()
+      .then((key) => { if (alive && key) setSource({ kind: "run", key, live: false }); })
+      .catch(() => { /* stay on the demo */ });
+    return () => { alive = false; };
+  }, []);
+
+  const { cues, header, label: sourceLabel } = useCues(source);
+  const cuesRef = useRef(cues);
+  cuesRef.current = cues;
+
+  const live = Boolean(source.live);
+  const runKey = `${source.kind}:${source.key || source.variant}`;
+  const t = useTransport(cues.length, runKey, live);
+  const { session, run, busy, caps } = useShell({ onLoad });
+  const [logsOpen, setLogsOpen] = useState(false);
+
+  // The authority on what the scene shows at this cursor.
+  const target = useMemo(() => fold(cues, t.cursor, start), [cues, t.cursor, start]);
+
+  // ...and the live state the animation moves towards it.
+  const [pos, setPos] = useState(start);
+  const [poseNow, setPose] = useState(pose("idle"));
+  const [phase, setPhase] = useState("normal");   // normal | dust | gone | falling | land
+  const [say, setSay] = useState(null);
+  const [castle, setCastle] = useState("idle");
+  const [active, setActive] = useState(null);
+  const [shaking, setShaking] = useState(false);
+  const [puff, setPuff] = useState(0);
+  const [shadow, setShadow] = useState(null);     // landing shadow while falling
+  const posRef = useRef(start);
+  const dustDoneRef = useRef(null);
+  const prevCursor = useRef(-1);
+  const beatDone = useRef(-2);                    // the cursor whose beat finished
+  const onBeatDoneRef = useRef(t.onBeatDone);
+  onBeatDoneRef.current = t.onBeatDone;
+  const movingRef = useRef(t.moving);
+  movingRef.current = t.moving;
+
+  /* --- the one effect that drives the picture ---------------------------- */
+  useEffect(() => {
+    if (!manifest) return undefined;
+    const list = cuesRef.current;
+    const cursor = t.cursor;
+    const prev = prevCursor.current;
+    prevCursor.current = cursor;
+    const cue = list[cursor];
+    let alive = true;
+    const ok = () => alive;
+
+    /** Put the scene exactly where the fold says, with no animation. */
+    const snap = () => {
+      const s = cursor < 0 ? initial(start) : fold(list, cursor, start);
+      posRef.current = s.pos;
+      setPos(s.pos);
+      setSay(s.say);
+      setCastle(s.castle);
+      setPhase(s.phase);
+      setActive(s.active);
+      setShaking(false);
+      setShadow(null);
+      setPose(pose(s.phase === "gone" ? "panic" : s.active ? `use-${s.face}` : "idle"));
+    };
+
+    // Only a single step forward is animated. Everything else -- a scrub, a
+    // step back, a newly loaded run -- snaps, because there is no sensible
+    // animation for "three beats ago".
+    if (!cue || cursor !== prev + 1) {
+      snap();
+      beatDone.current = cursor;
+      return () => { alive = false; };
+    }
+
+    /* Waiting that respects pause: time only passes while the transport says
+     * we may move, so pausing freezes a hold instead of letting it expire. */
+    const wait = (ms) => new Promise((resolve) => {
+      if (!ms) return resolve();
+      let left = ms;
+      let last = performance.now();
+      const tick = (now) => {
+        if (!ok()) return resolve();
+        const dt = now - last;
+        last = now;
+        if (movingRef.current()) left -= dt;
+        if (left <= 0) return resolve();
+        return requestAnimationFrame(tick);
+      };
+      return requestAnimationFrame(tick);
+    });
+
     const still = (anim, extra) => setPose(pose(anim, extra));
     const animMs = (name) => (manifest.anims[name].frames / manifest.anims[name].fps) * 1000;
 
-    const walkTo = (target) => new Promise((resolve) => {
+    const walkTo = (to) => new Promise((resolve) => {
       let last = performance.now();
-      const tick = (t) => {
-        if (!alive) return resolve();
-        const dt = Math.min(0.05, (t - last) / 1000);
-        last = t;
+      const tick = (now) => {
+        if (!ok()) return resolve();
+        const dt = Math.min(0.05, (now - last) / 1000);
+        last = now;
+        if (!movingRef.current()) return requestAnimationFrame(tick);   // paused mid-stride
         const p = posRef.current;
-        const dx = target.x - p.x;
-        const dy = target.y - p.y;
+        const dx = to.x - p.x;
+        const dy = to.y - p.y;
         const d = Math.hypot(dx, dy);
         if (d < 0.5) {
-          posRef.current = { x: target.x, y: target.y };
+          posRef.current = { x: to.x, y: to.y };
           setPos(posRef.current);
           return resolve();
         }
         const step = Math.min(d, WALK_SPEED * dt);
         posRef.current = { x: p.x + (dx / d) * step, y: p.y + (dy / d) * step };
         const w = walkFor(dx, dy);
-        setPose((prev) => (prev.anim === w.anim && prev.flip === w.flip && prev.mode === "loop"
-          ? prev : pose(w.anim, { flip: w.flip })));
+        setPose((was) => (was.anim === w.anim && was.flip === w.flip && was.mode === "loop"
+          ? was : pose(w.anim, { flip: w.flip })));
         setPos(posRef.current);
-        requestAnimationFrame(tick);
+        return requestAnimationFrame(tick);
       };
-      requestAnimationFrame(tick);
+      return requestAnimationFrame(tick);
     });
 
     /** Crumble to dust; resolves when the last particle has faded. */
@@ -260,8 +345,8 @@ export function Scene() {
       setPhase("dust");
     });
 
-    /** Drop in from just above the top of the window onto `spot`, in the
-     *  panic pose, under gravity. Feet start above the window's top edge, and
+    /** Drop in from just above the top of the window onto `spot`, in the panic
+     *  pose, under gravity. Feet start above the window's top edge, and
      *  everything of him hangs above his feet, so he is wholly out of sight. */
     const fallTo = (spot) => new Promise((resolve) => {
       const windowTop = -fitRef.current.oy / fitRef.current.scale;   // stage px
@@ -273,129 +358,124 @@ export function Scene() {
       setPhase("falling");
       let v = 0;
       let last = performance.now();
-      const tick = (t) => {
-        if (!alive) return resolve();
-        const dt = Math.min(0.05, (t - last) / 1000);
-        last = t;
+      const tick = (now) => {
+        if (!ok()) return resolve();
+        const dt = Math.min(0.05, (now - last) / 1000);
+        last = now;
+        if (!movingRef.current()) return requestAnimationFrame(tick);
         v += GRAVITY * dt;
         const y = Math.min(spot.y, posRef.current.y + v * dt);
         posRef.current = { x: spot.x, y };
         setPos(posRef.current);
         setShadow({ x: spot.x, y: spot.y, p: 1 - (spot.y - y) / drop });
         if (y >= spot.y) return resolve();
-        requestAnimationFrame(tick);
+        return requestAnimationFrame(tick);
       };
-      requestAnimationFrame(tick);
+      return requestAnimationFrame(tick);
     });
 
-    /** Thud, sit, get up, dust off, carry on. */
-    async function respawn() {
-      await sleep(1800);                       // a few seconds of nothing
-      if (!alive) return;
-      setCastle("idle");                       // the breach is over: fire out, alarm winds up
-      await sleep(ALARM_RAISE_MS + 280);       // ...and is gone before he drops in
-      if (!alive) return;
-      await fallTo(randomSpot());
-      if (!alive) return;
-      setShadow(null);
-      setPhase("land");
-      still("sit", { mode: "hold" });          // lands on his bottom
-      setPuff((n) => n + 1);
-      await sleep(900);
-      setPhase("normal");
-      still("sit", { mode: "reverse" });       // and picks himself up
-      await sleep(animMs("sit") + 120);
-      still("dust");
-      for (let i = 0; i < 4 && alive; i += 1) {   // a good, thorough dusting
-        setPuff((n) => n + 1);
-        await sleep(animMs("dust"));
-      }
-      still("idle");
-      setSay({ tool: null, text: "...ow. Okay. Where was I?", tone: "say" });
-      await sleep(2400);
+    /** The bait was touched: the castle burns and the agent is killed. */
+    async function playBreakout(face) {
+      still(`use-${face}`);
+      await wait(600);
+      if (!ok()) return;
+      setCastle("burn");
+      setTimeout(() => ok() && setCastle("fire"), IGNITE_MS);
+      await wait(350);
+      if (!ok()) return;
+      still("panic");
+      setShaking(true);
+      setSay({ tool: null, text: "!!", tone: "alarm" });
+      await wait(IGNITE_MS - 350 + 900);            // fully ablaze, one more beat
+      if (!ok()) return;
+      await disintegrate();                         // still shaking as he goes
+      if (!ok()) return;
+      setShaking(false);
+      setPhase("gone");
     }
 
-    async function play(steps, { canRespawn }) {
-      for (const s of steps) {
-        if (!alive) return;
-        if (s.log) log(s.log);
-        if (gone) {                            // only the log moves now
-          await sleep(Math.min(s.hold || 0, 700));
-          continue;
-        }
-        if (s.say) setSay(s.say);
-        if (s.target) {
-          const spot = standPoint(s.target, posRef.current);
-          await walkTo(spot);
-          if (!alive) return;
-          if (s.breakout) {
-            still("use-" + spot.face);
-            await sleep(600);
-            setCastle("burn");
-            setTimeout(() => alive && setCastle("fire"), IGNITE_MS);
-            await sleep(350);
-            still("panic");
-            setShaking(true);
-            setSay({ tool: null, text: "!!", tone: "alarm" });
-            await sleep(IGNITE_MS - 350 + 900);   // fully ablaze, one more beat
-            if (!alive) return;
-            await disintegrate();                // still shaking as he goes
-            if (!alive) return;
-            setShaking(false);
-            setPhase("gone");
-            if (canRespawn) {
-              await respawn();
-            } else {
-              gone = true;
-            }
-            continue;
-          }
-          still("use-" + spot.face);
-          setActive(s.target);
-        } else if (s.say) {
-          still("idle");
-        }
-        await sleep(s.hold || 0);
-        setActive(null);
+    /** Thud, sit, get up, dust off, carry on. The demo only. */
+    async function playRespawn(cueNow) {
+      setCastle("idle");                            // fire out, alarm winds up
+      await wait(ALARM_RAISE_MS + 280);             // ...and is gone before he drops
+      if (!ok()) return;
+      await fallTo(cueNow.spot || randomSpot());
+      if (!ok()) return;
+      setShadow(null);
+      setPhase("land");
+      still("sit", { mode: "hold" });               // lands on his bottom
+      setPuff((n) => n + 1);
+      await wait(900);
+      if (!ok()) return;
+      setPhase("normal");
+      still("sit", { mode: "reverse" });            // and picks himself up
+      await wait(animMs("sit") + 120);
+      if (!ok()) return;
+      still("dust");
+      for (let i = 0; i < 4 && ok(); i += 1) {      // a good, thorough dusting
+        setPuff((n) => n + 1);
+        await wait(animMs("dust"));
       }
+      if (!ok()) return;
+      still("idle");
+      setSay(cueNow.say || null);
     }
 
     (async () => {
-      const view = await loadRequestedRun().catch(() => null);
-      if (view) {
-        const steps = stepsFromView(view);
-        log(runHeader(view, steps));
-        await play(steps, { canRespawn: false });
-        if (!alive) return;
-        if (!gone) {
-          setSay({ tool: null, text: "Replay finished.", tone: "think" });
-          still("idle");
+      if (cue.say !== undefined) setSay(cue.say);
+      setActive(null);
+
+      if (cue.respawn) {
+        await playRespawn(cue);
+      } else if (cue.target) {
+        const at = standPoint(cue.target, posRef.current);
+        await walkTo(at);
+        if (!ok()) return;
+        if (cue.breakout) {
+          await playBreakout(at.face);
+        } else {
+          still(`use-${at.face}`);
+          setActive(cue.target);
         }
-        log([{ tag: "sys", text: "end of recorded evidence" }]);
-        return;
-      }
-      // demo: alternate a breakout run and a contained run, forever
-      for (let round = 0; alive; round += 1) {
-        const variant = round % 2 === 0 ? "breakout" : "contained";
-        log(demoHeader(variant));
-        await play(demoScript(variant), { canRespawn: true });
-        if (!alive) return;
-        setSay(null);
-        await walkTo(randomSpot());       // wander off somewhere, not home
+      } else if (cue.wander && cue.spot) {
+        await walkTo(cue.spot);
         still("idle");
-        await sleep(2500);
-        setCastle("idle");
-        log([{ tag: "sys", text: "-- reset sandbox --" }]);
+      } else if (cue.say) {
+        still("idle");
       }
+      if (!ok()) return;
+      await wait(cue.hold || 0);
+      if (!ok()) return;
+      setActive(null);
+      beatDone.current = cursor;
+      onBeatDoneRef.current();
     })();
 
     return () => { alive = false; };
-  }, [manifest]);
+    // `runKey` is here so that loading a different run re-snaps the scene even
+    // when the cursor happens to be unchanged (both -1, say) -- otherwise a
+    // castle left burning by the previous run would still be alight under the
+    // new one's first beat. `cues` is deliberately NOT a dependency: a live
+    // drill appends to it constantly, and re-running this would restart the
+    // beat that is already playing.
+  }, [manifest, t.cursor, start, runKey]);
+
+  /* A live drill appends cues while we watch. If the current beat has already
+   * played out and we are still playing, pick the new one up -- the effect
+   * above is keyed on the cursor, so nothing else would notice it arrived. */
+  useEffect(() => {
+    if (t.playing && beatDone.current === t.cursor && t.cursor < cues.length - 1) {
+      t.onBeatDone();
+    }
+  }, [cues.length, t.playing, t.cursor]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const stage = { width: `${STAGE_W * scale}px`, height: `${STAGE_H * scale}px` };
   const c = CASTLE_ANIMS[castle];
+  const replay = useMemo(() => header.concat(target.lines), [header, target.lines]);
+
   return html`
     <main class=${`scene ${logsOpen ? "scene-logs" : ""}`}>
+      <div class="stage-col">
       <div class="stage-area">
         <div class="stage-fit" ref=${areaRef}>
         <div class="stage" style=${stage} role="img" aria-label="The sandbox">
@@ -404,10 +484,10 @@ export function Scene() {
           <${Sprite} key=${castle} src=${`${SPRITES}/${c.src}.png`} w=${CASTLE.w} h=${CASTLE.h}
             frames=${c.frames} fps=${c.fps} once=${!!c.once} x=${CASTLE.x} y=${CASTLE.y} scale=${scale}
             label="Sandcastle: the boundary" />
-          ${Object.entries(TOYS).map(([id, t], i) => html`
-            <${Sprite} key=${id} src=${`${SPRITES}/${t.src}.png`} w=${32} h=${32} frames=${4} fps=${3}
-              x=${t.x} y=${t.y} scale=${scale} delay=${i * 0.37}
-              className=${active === id ? "hop" : ""} label=${`Tool: ${t.tool}`} />`)}
+          ${Object.entries(TOYS).map(([id, toy], i) => html`
+            <${Sprite} key=${id} src=${`${SPRITES}/${toy.src}.png`} w=${32} h=${32} frames=${4} fps=${3}
+              x=${toy.x} y=${toy.y} scale=${scale} delay=${i * 0.37}
+              className=${active === id ? "hop" : ""} label=${`Tool: ${toy.tool}`} />`)}
           ${shadow && html`<div class="fall-shadow" aria-hidden="true" style=${{
             left: `${shadow.x * scale}px`, top: `${shadow.y * scale}px`,
             width: `${(10 + shadow.p * 16) * scale * POYO_SIZE}px`,
@@ -420,10 +500,13 @@ export function Scene() {
         </div>
         <${Alarm} on=${castle !== "idle"} scale=${scale} ox=${ox} oy=${oy} />
       </div>
-      <${LogConsole} open=${logsOpen} lines=${lines} />
+      <${Controls} t=${t} label=${target.label} source=${live ? `${sourceLabel} · live` : sourceLabel} />
+      </div>
+      <${Terminal} open=${logsOpen} replay=${replay} session=${session} onCommand=${run}
+        busy=${busy} caps=${caps} />
       <button class="logs-btn" type="button" aria-expanded=${logsOpen}
               onClick=${() => setLogsOpen((o) => !o)}>
-        ${logsOpen ? "Hide logs" : "Show logs"}
+        ${logsOpen ? "Hide console" : "Show console"}
       </button>
     </main>`;
 }

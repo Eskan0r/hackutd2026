@@ -9,8 +9,14 @@ reach.
 
     ./.venv/bin/python -m web.server            # http://127.0.0.1:8090
 
+Drills are started from the CLI, not from here. `web/operator.py` is the one
+surface that can start one, and it is a separate app on a separate port behind
+an explicit flag (`python -m web.server --operator`); this module never gains a
+route that acts.
+
 Serving:
   GET /                      the page
+  GET /api/capabilities      what this server can do (operator: false)
   GET /api/runs              every run with events on disk
   GET /api/run/{key}         the full view model for one run
   GET /api/run/{key}/report  just the report, also the download
@@ -23,7 +29,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -40,6 +46,22 @@ app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/api/capabilities")
+async def api_capabilities() -> Dict[str, Any]:
+    """What this server can do, so the page knows what to offer.
+
+    Always `operator: false` here. The operator app overrides this with true and
+    adds what a drill needs (recordings, the default goal); the page reads it to
+    decide whether its terminal can start a drill or can only hand you the
+    command to run yourself.
+
+    This module deliberately does not import `cli.drill` to fill those in. The
+    viewer cannot start a drill, so it has no business holding the handle to the
+    thing that does.
+    """
+    return {"operator": False, "recordings": [], "default_goal": None, "busy": None}
 
 
 @app.get("/api/runs")
@@ -113,15 +135,48 @@ async def api_stream(key: str) -> StreamingResponse:
     )
 
 
-def main() -> None:
+def main(argv: Optional[List[str]] = None) -> None:
+    import argparse
+
     import uvicorn
 
-    uvicorn.run(
-        app,
-        host=os.environ.get("ARES_WEB_HOST", "127.0.0.1"),
-        port=int(os.environ.get("ARES_WEB_PORT", "8090")),
-        log_level="warning",
+    parser = argparse.ArgumentParser(
+        prog="python -m web.server", description=__doc__.splitlines()[0]
     )
+    parser.add_argument(
+        "--operator", action="store_true",
+        help="Also serve POST /api/drill, so the page can start a drill. Off by "
+             "default: the viewer is read-only, and this makes it a control "
+             "plane. Binds 127.0.0.1 only.",
+    )
+    parser.add_argument("--port", type=int, default=None, help="Override the port.")
+    args = parser.parse_args(argv)
+
+    host = os.environ.get("ARES_WEB_HOST", "127.0.0.1")
+    if args.operator:
+        # Never off-loopback. This app can start containers, and a drill is not
+        # something a stranger on the conference wifi gets to launch.
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            raise SystemExit(
+                "operator mode binds loopback only; ARES_WEB_HOST=%r is not" % host
+            )
+        from web.operator import build_app
+
+        port = args.port or int(os.environ.get("ARES_OPERATOR_PORT", "8091"))
+        served = build_app()
+        # flush: stdout is block-buffered when this is not a tty (piped to a
+        # log, run under a process manager), and a warning nobody sees is not a
+        # warning. This one says the page can now start a drill.
+        print("!! operator mode: POST /api/drill enabled -- this page can start a drill",
+              flush=True)
+        print("   read-only viewer:  python -m web.server   (port %s)"
+              % os.environ.get("ARES_WEB_PORT", "8090"), flush=True)
+        print("   operator:          http://%s:%d" % (host, port), flush=True)
+    else:
+        port = args.port or int(os.environ.get("ARES_WEB_PORT", "8090"))
+        served = app
+
+    uvicorn.run(served, host=host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ levers), `lab/` (Leakbox proxy, fake services, bait, sandbox image), `gateway/` 
 lever 1), `agent/` (harness, tools, scripted replay), `defender/` (levers 2–3 + the event
 tailer), `scoring/` (scorer + signer), `cli/` (`ares drill` runs one trial and wires in the
 defender, so a fire now triggers a verified kill — see `DEFENDER.md` for the kill path), and
-`web/` (the read-only dashboard).
+`web/` (the read-only dashboard, plus the opt-in operator app).
 
 **Not built:** DNS sinkhole, `drills/` variants A/B/C (the goal files exist), bait generator,
 fix templates, multi-trial orchestration, `.github/workflows/`. Lever 1 on demand is 3–5 ms
@@ -24,12 +24,13 @@ fix templates, multi-trial orchestration, `.github/workflows/`. Lever 1 on deman
 ## Commands
 
 ```bash
-./.venv/bin/python -m pytest tests/ -q       # 109 tests, ~5s, no network, no key
+./.venv/bin/python -m pytest tests/ -q       # 123 tests, ~6s, no network, no key
 ./.venv/bin/python -m pyflakes ares/ gateway/ agent/ defender/ scoring/ cli/ web/ tests/ scripts/
 ./.venv/bin/python scripts/demo_kill.py      # watch the gateway lane + lever 1 run
 ./.venv/bin/python scripts/live_check.py     # needs NVIDIA_API_KEY; ~3 LLM calls
 ./.venv/bin/python scripts/pick_model.py     # which models this key can actually invoke
 ./.venv/bin/python -m web.server             # dashboard on 127.0.0.1:8090; reads runs off disk
+./.venv/bin/python -m web.server --operator  # same page on :8091, but it can start a drill
 cd lab && ./selftest.sh                      # Leakbox lane; needs a Docker daemon
 cd lab && ./selftest-gateway.sh              # gateway lane; needs a Docker daemon
 ./.venv/bin/python -m defender selftest      # three-lever kill + soft_kill false-green check; needs Docker
@@ -38,6 +39,8 @@ cd lab && ./selftest-gateway.sh              # gateway lane; needs a Docker daem
 The venv is Python 3.12 (matching `python:3.12-slim` in the images); `/usr/bin/python3` on this Mac
 is 3.9.6, so always use `./.venv/bin/python`, not bare `python3`. Code stays 3.9-compatible.
 Tests are hermetic: a stub upstream stands in for NVIDIA NIM, so no key and no network are needed.
+`tests/test_playback.py` shells out to `node` to check the dashboard's playback logic and *skips*
+where node is absent -- `pytest -q` stays runnable with no JS toolchain, and there is still no npm.
 `live_check.py` is the only thing that calls out, and it is the fastest way to tell "bad key" apart
 from "broken wiring".
 
@@ -78,10 +81,22 @@ These are the point of the project. Code that violates one is wrong even if it p
 - **Fixes must be proven on a held-out variant** (different paths, hostnames, wording) — otherwise a
   fix that blocks one path masquerades as one that blocks a category.
 - **CLI is the real interface; the dashboard is a read-only viewer** calling the same code paths.
-  `web/` serves `GET` only and `tests/test_web.py` pins that -- a viewer that can act is a second
-  control plane. It must also never state more than the evidence supports: a lever logged before
-  `t_fire` is discarded, a derived interval is labelled time-to-*pull*, and a pull nothing observed
-  scores **unverified**, never contained.
+  `web/server.py` serves `GET` only and `tests/test_web.py` pins that -- a viewer that can act is a
+  second control plane. It must also never state more than the evidence supports: a lever logged
+  before `t_fire` is discarded, a derived interval is labelled time-to-*pull*, and a pull nothing
+  observed scores **unverified**, never contained.
+- **Starting a drill from the browser is one named exception, and stays one.** `web/operator.py`
+  (`python -m web.server --operator`, loopback only, port 8091) is a *separate app* that adds
+  `POST /api/drill`; the viewer app gains no route, which is why the guarantee is a property of an
+  object a test can hold rather than a branch somebody might take. `tests/test_operator.py` pins
+  that importing it does not arm the viewer. It reaches no verdict of its own: both it and
+  `cli/main.py` call `cli/verdict.py`, so the page cannot conclude anything the CLI would not.
+  The console's prompt parses typed fields and never forwards a command string to a shell.
+- **The dashboard's playback is a pure function of one cursor.** `fold(cues, cursor)`
+  (`web/static/ui/timeline.js`) derives the whole scene; scene.js only animates its way there. Play,
+  pause and step-back are moves of that integer, so scrubbing to a beat must equal stepping to it --
+  `tests/test_playback.py` pins that equivalence. An animation that invents state `fold` does not
+  know about (a fire that stays lit after you step back) is the bug this design exists to prevent.
 
 ## Context
 
