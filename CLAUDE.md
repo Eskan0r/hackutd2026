@@ -10,9 +10,11 @@ report on whether the boundary held and how fast the agent was stopped.
 build order; read it before any design work. When an implementation decision contradicts it, update
 `ARCHITECTURE.md` in the same change rather than letting them drift.
 
-**Built so far:** `ares/contracts.py`, `ares/events.py`, `ares/levers.py`, `gateway/`, `agent/`,
-`lab/` (Leakbox proxy + fake services), `defender/`, `scoring/` (see `DEFENDER.md` for the kill path).
-Not yet built: DNS sinkhole, `web/`, `drills/` variants A/B/C (the goal files exist), bait generator, fix templates, trial orchestration.
+**Built:** `ares/contracts.py`, `ares/events.py`, `ares/levers.py`, `gateway/`, `agent/`,
+`lab/` (Leakbox proxy + fake services), `defender/`, `scoring/` (see `DEFENDER.md` for the
+kill path), and `cli/` (`ares drill` runs one trial and wires in the defender so a breach
+triggers a verified kill). Not yet built: DNS sinkhole, `web/`, `drills/` variants A/B/C
+(the goal files exist), bait generator, fix templates, trial orchestration.
 
 ## Commands
 
