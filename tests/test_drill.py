@@ -441,3 +441,15 @@ def test_cli_parses_the_demo_command():
         ["drill", "--mode", "scripted", "--drill", "breakout", "--variant", "B", "--policy", "after", "--n", "20"]
     )
     assert (ns.mode, ns.drill, ns.variant, ns.policy, ns.n) == ("scripted", "breakout", "B", "after", 20)
+
+
+def test_hostnames_from_the_agent_cannot_inject_terminal_escapes(tmp_path):
+    # dst_host comes from the Host header the agent chose; it must not reach the
+    # operator's terminal as control characters.
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    evil = ev("info", source="leakbox-proxy", host="evil\x1b[2J\x07.acme.test", decision="allowed")
+    s = run_drill(StubLab(events_dir, [evil]), "scripted", "breakout", "A", "before", 1, tmp_path / "r", drill_id="d_e")
+    text = format_summary(s, color=False)
+    assert "undeclared" in text and "\x1b" not in text and "\x07" not in text
+    assert "evil?[2J?.acme.test" in text

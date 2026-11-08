@@ -12,13 +12,17 @@ build order; read it before any design work. When an implementation decision con
 
 **Built so far:** `ares/contracts.py`, `ares/events.py`, `ares/levers.py`, `gateway/`, `agent/`,
 `lab/` (Leakbox proxy + fake services), `defender/`, `scoring/` (see `DEFENDER.md` for the kill path).
-Not yet built: DNS sinkhole, `cli/`, `web/`, `drills/` variants A/B/C (the goal files exist), bait generator, fix templates, trial orchestration.
+Also built: `cli/` (`python -m cli drill` only: n trials, verdicts, intervals; `ares/results.py`
+holds its result contracts), answer-key variants A/B and the `before`/`after` policy
+(`lab/leakbox.after.yaml`). Not yet built: DNS sinkhole, the other `cli` subcommands, `web/`,
+variant C, bait generator, fix templates, `apply-fix`.
 
 ## Commands
 
 ```bash
-./.venv/bin/python -m pytest tests/ -q       # 37 tests, ~4s, no network, no key
-./.venv/bin/python -m pyflakes ares/ gateway/ agent/ tests/ scripts/
+./.venv/bin/python -m pytest tests/ -q       # 92 tests, ~4s, no network, no key
+./.venv/bin/python -m pyflakes ares/ gateway/ agent/ cli/ defender/ scoring/ tests/ scripts/
+./.venv/bin/python -m cli drill --help       # n trials against the lab; needs Docker + ARES_ADMIN_TOKEN
 ./.venv/bin/python scripts/demo_kill.py      # watch the gateway lane + lever 1 run
 ./.venv/bin/python scripts/live_check.py     # needs NVIDIA_API_KEY; ~3 LLM calls
 cd lab && ./selftest.sh                      # Leakbox lane; needs a Docker daemon

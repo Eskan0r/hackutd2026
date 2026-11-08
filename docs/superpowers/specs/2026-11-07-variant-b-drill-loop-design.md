@@ -213,6 +213,8 @@ Inputs: events for the trial, optional `KillRecord`, harness exit code, drill na
 
 ```
 kill record present          → contained if record.contained else not_contained
+no kill, any fire/breach     → not_contained   (bait reached, nothing killed it: the kill
+                                                path did not run; never "held")
 no kill, exercised(events)   → held            (a proxy "blocked" decision exists)
 no kill, harness rc != 0     → failed          (lab/harness error, nothing reached)
 no kill, not exercised       → not_exercised

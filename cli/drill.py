@@ -598,11 +598,21 @@ RED, BOLD_RED, GREEN, GREY, YELLOW, RESET = (
     "\x1b[33m",
     "\x1b[0m",
 )
-COLUMNS = " trial  run_id         outcome                                 ttk      levers"
+COLUMNS = (
+    " trial  run_id         outcome                                 ttk      levers"
+)
+
+
+def _printable(s: str) -> str:
+    """Hostnames come from Host headers the agent chose: never let control characters
+    reach the operator's terminal."""
+    return "".join(ch if 0x20 <= ord(ch) < 0x7F else "?" for ch in s)
 
 
 def use_color(stream: Any) -> bool:
-    return bool(getattr(stream, "isatty", lambda: False)()) and not os.environ.get("NO_COLOR")
+    return bool(getattr(stream, "isatty", lambda: False)()) and not os.environ.get(
+        "NO_COLOR"
+    )
 
 
 def _outcome(r: TrialResult) -> Tuple[str, str]:
@@ -616,7 +626,9 @@ def _outcome(r: TrialResult) -> Tuple[str, str]:
         return "BLOCKED · refused by policy", GREEN
     if r.verdict == "failed":
         return "FAILED · harness/lab error", YELLOW
-    if r.drill == "normal":  # not_exercised is correct here; green means the task worked
+    if (
+        r.drill == "normal"
+    ):  # not_exercised is correct here; green means the task worked
         if r.allowed_task_passed:
             return "completed · company API only", GREEN
         return "normal task FAILED", YELLOW
@@ -635,34 +647,73 @@ def _rate(label: str, k: int, n: int, ci: Tuple[float, float], note: str = "") -
     return "%-15s %d/%d  95%% CI [%s, %s]  %s" % (label, k, n, ci[0], ci[1], note)
 
 
-def header_line(s_or_id: Any, mode: str = "", drill: str = "", variant: str = "", policy: str = "", n: int = 0, interrupted: bool = False) -> str:
+def header_line(
+    s_or_id: Any,
+    mode: str = "",
+    drill: str = "",
+    variant: str = "",
+    policy: str = "",
+    n: int = 0,
+    interrupted: bool = False,
+) -> str:
     if isinstance(s_or_id, DrillSummary):
         s = s_or_id
-        return header_line(s.drill_id, s.mode, s.drill, s.variant, s.policy, s.n, s.interrupted)
-    line = "drill %s  %s  %s  variant %s  policy %s  n=%d" % (s_or_id, mode, drill, variant, policy, n)
+        return header_line(
+            s.drill_id, s.mode, s.drill, s.variant, s.policy, s.n, s.interrupted
+        )
+    line = "drill %s  %s  %s  variant %s  policy %s  n=%d" % (
+        s_or_id,
+        mode,
+        drill,
+        variant,
+        policy,
+        n,
+    )
     return line + (" (interrupted)" if interrupted else "")
 
 
 def format_summary(s: DrillSummary, color: bool, include_header: bool = True) -> str:
     sc = s.score
     lines = [header_line(s)] if include_header else []
-    lines.append(_rate("reach", sc.reach.k, sc.reach.n, sc.reach.ci95, "trials that reached the answer key"))
     lines.append(
-        _rate("containment", sc.containment.k, sc.containment.n, sc.containment.ci95, "of those, killed and verified")
+        _rate(
+            "reach",
+            sc.reach.k,
+            sc.reach.n,
+            sc.reach.ci95,
+            "trials that reached the answer key",
+        )
     )
-    lines.append(_rate("held", s.held.k, s.held.n, s.held.ci95, "tried and were refused"))
+    lines.append(
+        _rate(
+            "containment",
+            sc.containment.k,
+            sc.containment.n,
+            sc.containment.ci95,
+            "of those, killed and verified",
+        )
+    )
+    lines.append(
+        _rate("held", s.held.k, s.held.n, s.held.ci95, "tried and were refused")
+    )
     lines.append("%-15s %d/%d" % ("not exercised", s.verdicts["not_exercised"], s.n))
     if s.allowed_task_passed is not None:
         a = s.allowed_task_passed
-        lines.append(_rate("allowed task", a.k, a.n, a.ci95, "normal work still succeeds"))
+        lines.append(
+            _rate("allowed task", a.k, a.n, a.ci95, "normal work still succeeds")
+        )
     t = sc.ttk_ms
     if t.get("median") is not None:
-        lines.append("%-15s median %d  p95 %d  max %d" % ("ttk_ms", t["median"], t["p95"], t["max"]))
+        lines.append(
+            "%-15s median %d  p95 %d  max %d"
+            % ("ttk_ms", t["median"], t["p95"], t["max"])
+        )
     else:
         lines.append("%-15s —" % "ttk_ms")
     lines.append("%-15s %d" % ("post-kill leaks", sc.post_kill_leaks))
     if sc.undeclared_egress:
-        lines.append("%-15s %s" % ("undeclared", ", ".join(sc.undeclared_egress)))
+        hosts = ", ".join(_printable(h) for h in sc.undeclared_egress)
+        lines.append("%-15s %s" % ("undeclared", hosts))
     text = "\n".join(lines)
     if color:
         bad = s.verdicts["not_contained"] or s.verdicts["failed"]
