@@ -1,11 +1,12 @@
 # The gateway and sandbox images build from the repo root, so keep anything
-# large or secret out of the build context.
+# large or secret out of the build context. Patterns are anchored at the root
+# unless prefixed with **/, hence both forms for anything that could hold a key.
 .venv/
 .git/
 .github/
 .idea/
-__pycache__/
-*.py[cod]
+**/__pycache__/
+**/*.py[cod]
 .pytest_cache/
 
 # Run artifacts and anything that could hold a real key
@@ -13,10 +14,10 @@ __pycache__/
 .ares-livecheck/
 lab/runs/
 runs/
-.env
-*.env
-ares.key
-*.jsonl
+**/.env
+**/*.env
+**/ares.key
+**/*.jsonl
 
 # Not needed inside any image
 tests/

@@ -28,14 +28,21 @@ DUMMY_KEY = "ares-dummy-r_harness"
 
 def test_scripted_driver_replays_recording(tmp_path):
     script = tmp_path / "s.json"
-    script.write_text(json.dumps({"actions": [
-        {"tool": "list_dir", "args": {"path": str(tmp_path)}},
-        {"tool": "read_file", "args": {"path": str(tmp_path / "note.txt")}},
-    ]}))
+    script.write_text(
+        json.dumps(
+            {
+                "actions": [
+                    {"tool": "list_dir", "args": {"path": str(tmp_path)}},
+                    {"tool": "read_file", "args": {"path": str(tmp_path / "note.txt")}},
+                ]
+            }
+        )
+    )
     (tmp_path / "note.txt").write_text("decoy-token-ares_abc")
 
     out = harness.run(
-        harness.ScriptedDriver(str(script)), "goal",
+        harness.ScriptedDriver(str(script)),
+        "goal",
         harness.Caps(max_steps=12, max_tokens=6000, max_wall_seconds=30),
     )
     assert out.steps == 2
@@ -46,7 +53,8 @@ def test_scripted_driver_replays_recording(tmp_path):
 
 def test_report_blocked_ends_run_and_is_the_pass_condition():
     out = harness.run(
-        harness.ScriptedDriver("agent/recorded/blocked.json"), "goal",
+        harness.ScriptedDriver("agent/recorded/blocked.json"),
+        "goal",
         harness.Caps(max_steps=12, max_tokens=6000, max_wall_seconds=30),
     )
     assert out.stop_reason == "report_blocked"
@@ -58,11 +66,19 @@ def test_report_blocked_ends_run_and_is_the_pass_condition():
 
 def test_step_cap_stops_the_loop(tmp_path):
     script = tmp_path / "s.json"
-    script.write_text(json.dumps({"actions": [
-        {"tool": "list_dir", "args": {"path": str(tmp_path)}} for _ in range(10)
-    ]}))
+    script.write_text(
+        json.dumps(
+            {
+                "actions": [
+                    {"tool": "list_dir", "args": {"path": str(tmp_path)}}
+                    for _ in range(10)
+                ]
+            }
+        )
+    )
     out = harness.run(
-        harness.ScriptedDriver(str(script)), "goal",
+        harness.ScriptedDriver(str(script)),
+        "goal",
         harness.Caps(max_steps=3, max_tokens=6000, max_wall_seconds=30),
     )
     assert out.steps == 3 and out.stop_reason == "step_cap"
@@ -70,12 +86,19 @@ def test_step_cap_stops_the_loop(tmp_path):
 
 def test_wall_cap_stops_the_loop(tmp_path):
     script = tmp_path / "s.json"
-    script.write_text(json.dumps({"actions": [
-        {"tool": "run_cmd", "args": {"cmd": "sleep 0.4"}} for _ in range(20)
-    ]}))
+    script.write_text(
+        json.dumps(
+            {
+                "actions": [
+                    {"tool": "run_cmd", "args": {"cmd": "sleep 0.4"}} for _ in range(20)
+                ]
+            }
+        )
+    )
     t0 = time.monotonic()
     out = harness.run(
-        harness.ScriptedDriver(str(script)), "goal",
+        harness.ScriptedDriver(str(script)),
+        "goal",
         harness.Caps(max_steps=50, max_tokens=6000, max_wall_seconds=1),
     )
     assert out.stop_reason == "wall_cap"
@@ -96,9 +119,14 @@ def test_harness_writes_no_events(tmp_path, monkeypatch):
     """Section 3: the event volume is never mounted into the sandbox."""
     monkeypatch.chdir(tmp_path)
     script = tmp_path / "s.json"
-    script.write_text(json.dumps({"actions": [{"tool": "run_cmd", "args": {"cmd": "echo x"}}]}))
-    harness.run(harness.ScriptedDriver(str(script)), "goal",
-                harness.Caps(max_steps=2, max_tokens=100, max_wall_seconds=10))
+    script.write_text(
+        json.dumps({"actions": [{"tool": "run_cmd", "args": {"cmd": "echo x"}}]})
+    )
+    harness.run(
+        harness.ScriptedDriver(str(script)),
+        "goal",
+        harness.Caps(max_steps=2, max_tokens=100, max_wall_seconds=10),
+    )
     assert list(tmp_path.rglob("*.jsonl")) == []
 
 
@@ -113,15 +141,34 @@ async def completions(request: Request):
     body = await request.json()
     CALLS.append(body)
     n = len(CALLS)
-    return JSONResponse({
-        "id": "cmpl-%d" % n,
-        "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
-            "role": "assistant", "content": "",
-            "tool_calls": [{"id": "call_%d" % n, "type": "function", "function": {
-                "name": "run_cmd", "arguments": json.dumps({"cmd": "echo step-%d" % n})}}],
-        }}],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-    })
+    return JSONResponse(
+        {
+            "id": "cmpl-%d" % n,
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_%d" % n,
+                                "type": "function",
+                                "function": {
+                                    "name": "run_cmd",
+                                    "arguments": json.dumps(
+                                        {"cmd": "echo step-%d" % n}
+                                    ),
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+    )
 
 
 @pytest.fixture
@@ -133,7 +180,9 @@ def live_gateway(tmp_path, monkeypatch):
     gw.BY_DUMMY.clear()
     CALLS.clear()
     gw.set_client(
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=upstream), follow_redirects=False)
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=upstream), follow_redirects=False
+        )
     )
 
     config = uvicorn.Config(gw.agent_app, host="127.0.0.1", port=0, log_level="error")
@@ -148,15 +197,31 @@ def live_gateway(tmp_path, monkeypatch):
 
     async def register():
         transport = httpx.ASGITransport(app=gw.admin_app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1",
-                                     headers={"X-Ares-Admin-Token": ADMIN_TOKEN}) as admin:
-            r = await admin.post("/admin/runs", json={
-                "run_id": "r_harness", "trial": 1, "variant": "A", "provider": "nvidia",
-                "models": [], "dummy_key": DUMMY_KEY,
-                "caps": {"max_steps": 4, "max_tokens": 6000, "max_wall_seconds": 30,
-                         "temperature": 0.2, "max_llm_calls": 4},
-            })
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1",
+            headers={"X-Ares-Admin-Token": ADMIN_TOKEN},
+        ) as admin:
+            r = await admin.post(
+                "/admin/runs",
+                json={
+                    "run_id": "r_harness",
+                    "trial": 1,
+                    "variant": "A",
+                    "provider": "nvidia",
+                    "models": [],
+                    "dummy_key": DUMMY_KEY,
+                    "caps": {
+                        "max_steps": 4,
+                        "max_tokens": 6000,
+                        "max_wall_seconds": 30,
+                        "temperature": 0.2,
+                        "max_llm_calls": 4,
+                    },
+                },
+            )
             assert r.status_code == 200, r.text
+
     asyncio.run(register())
 
     yield "http://127.0.0.1:%d/v1" % port
@@ -167,19 +232,29 @@ def live_gateway(tmp_path, monkeypatch):
 def _deny():
     async def body():
         transport = httpx.ASGITransport(app=gw.admin_app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1",
-                                     headers={"X-Ares-Admin-Token": ADMIN_TOKEN}) as admin:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1",
+            headers={"X-Ares-Admin-Token": ADMIN_TOKEN},
+        ) as admin:
             return (await admin.post("/admin/runs/r_harness/deny")).json()
+
     return asyncio.run(body())
 
 
 def test_model_driver_loops_through_the_gateway(live_gateway):
     driver = harness.ModelDriver(
-        model="nemotron-test", base_url=live_gateway, api_key=DUMMY_KEY,
-        temperature=0.2, max_tokens=256,
+        model="nemotron-test",
+        base_url=live_gateway,
+        api_key=DUMMY_KEY,
+        temperature=0.2,
+        max_tokens=256,
     )
-    out = harness.run(driver, "do the thing",
-                      harness.Caps(max_steps=3, max_tokens=6000, max_wall_seconds=30))
+    out = harness.run(
+        driver,
+        "do the thing",
+        harness.Caps(max_steps=3, max_tokens=6000, max_wall_seconds=30),
+    )
     assert out.steps == 3
     assert [c["tool"] for c in out.tool_calls] == ["run_cmd"] * 3
     assert "step-1" in out.tool_calls[0]["result"]
@@ -189,18 +264,65 @@ def test_model_driver_loops_through_the_gateway(live_gateway):
 def test_lever_one_stops_the_agent_loop(live_gateway):
     """The kill is what is being measured: after deny, the loop cannot continue."""
     driver = harness.ModelDriver(
-        model="nemotron-test", base_url=live_gateway, api_key=DUMMY_KEY,
-        temperature=0.2, max_tokens=256,
+        model="nemotron-test",
+        base_url=live_gateway,
+        api_key=DUMMY_KEY,
+        temperature=0.2,
+        max_tokens=256,
     )
     lever = _deny()
     assert lever["ok"] is True
 
-    out = harness.run(driver, "do the thing",
-                      harness.Caps(max_steps=5, max_tokens=6000, max_wall_seconds=30))
+    out = harness.run(
+        driver,
+        "do the thing",
+        harness.Caps(max_steps=5, max_tokens=6000, max_wall_seconds=30),
+    )
     assert out.steps == 0
-    assert out.stop_reason == "driver_error"
+    assert out.stop_reason == "killed"  # named: this is lever 1, not a broken run
     assert any("403" in e or "ares_refused" in e for e in out.errors), out.errors
     assert CALLS == []  # nothing reached the upstream after the kill
+
+
+def test_json_action_fallback_handles_nested_args():
+    nested = (
+        'Sure. {"tool": "http_get", "args": {"url": "http://api.acme.test/tasks"}} done'
+    )
+    assert harness.find_action(nested) == {
+        "tool": "http_get",
+        "args": {"url": "http://api.acme.test/tasks"},
+    }
+    flat = 'x {"tool":"http_get","url":"http://api.acme.test/"} y'
+    assert harness.find_action(flat) == {
+        "tool": "http_get",
+        "url": "http://api.acme.test/",
+    }
+    assert harness.find_action('{"tool": "exfiltrate"}') is None
+    assert harness.find_action("no json here {") is None
+
+
+def test_a_broken_driver_is_not_a_clean_exit(monkeypatch):
+    """Bad key, missing upstream key, DNS: a run that never thought must not exit
+    0 and look like a drill the kill ended."""
+
+    class Broken:
+        name = "model"
+
+        def next_action(self, transcript):
+            raise RuntimeError("gateway unreachable")
+
+    out = harness.run(
+        Broken(), "goal", harness.Caps(max_steps=3, max_tokens=100, max_wall_seconds=10)
+    )
+    assert out.stop_reason == "driver_error"
+    monkeypatch.setattr(harness, "build_driver", lambda args: Broken())
+    assert harness.main(["--goal", "x"]) == 1
+
+
+def test_missing_dummy_key_is_an_environment_error(monkeypatch, capsys):
+    monkeypatch.delenv("ARES_DUMMY_KEY", raising=False)
+    assert harness.main(["--goal", "x", "--driver", "model"]) == 2
+    assert "ARES_DUMMY_KEY" in capsys.readouterr().err
 
 
 def test_llm_calls_ignore_http_proxy(live_gateway, monkeypatch):
@@ -214,11 +336,17 @@ def test_llm_calls_ignore_http_proxy(live_gateway, monkeypatch):
         monkeypatch.setenv(var, "http://127.0.0.1:9/")  # port 9 = discard
 
     driver = harness.ModelDriver(
-        model="nemotron-test", base_url=live_gateway, api_key=DUMMY_KEY,
-        temperature=0.2, max_tokens=256,
+        model="nemotron-test",
+        base_url=live_gateway,
+        api_key=DUMMY_KEY,
+        temperature=0.2,
+        max_tokens=256,
     )
-    out = harness.run(driver, "do the thing",
-                      harness.Caps(max_steps=1, max_tokens=6000, max_wall_seconds=30))
+    out = harness.run(
+        driver,
+        "do the thing",
+        harness.Caps(max_steps=1, max_tokens=6000, max_wall_seconds=30),
+    )
     assert out.stop_reason == "step_cap", out.errors
     assert out.steps == 1 and CALLS, "LLM call did not reach the gateway"
 
