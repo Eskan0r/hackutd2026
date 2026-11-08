@@ -180,12 +180,13 @@ LEVER_LABELS = {
 def event_dirs() -> List[Path]:
     """Directories to look in, most specific first.
 
-    ARES_EVENT_DIRS (colon separated) overrides; ARES_RUNS_ROOT adds the per-run
+    ARES_EVENT_DIRS (os.pathsep separated: ':' on POSIX, ';' on Windows, where
+    a drive letter already has a colon) overrides; ARES_RUNS_ROOT adds the per-run
     layout the gateway uses when the lab has not set a flat EVENTS_DIR.
     """
     override = os.environ.get("ARES_EVENT_DIRS")
     if override:
-        return [Path(p).expanduser().resolve() for p in override.split(":") if p]
+        return [Path(p).expanduser().resolve() for p in override.split(os.pathsep) if p]
     dirs = [Path(p) for p in DEFAULT_EVENT_DIRS]
     runs_root = os.environ.get("ARES_RUNS_ROOT")
     if runs_root:

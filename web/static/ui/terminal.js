@@ -1,16 +1,18 @@
 /* The drill console: a real prompt you can type into.
  *
  * It reads like a terminal and it runs real commands, but it is not a shell.
- * `ares drill ...` is parsed here into the handful of typed fields the API
+ * `ares trial ...` is parsed here into the handful of typed fields the API
  * takes (see parseDrill); the text you typed is never sent anywhere to be
  * interpreted. A browser prompt that forwarded a string to a shell would be a
  * remote code execution hole with a pixel-art theme.
  *
  * What it can do depends on what the server admits to in /api/capabilities:
  *
- *   operator: false   the read-only viewer. `ares drill` prints the command
- *                     for you to run yourself and copies it to the clipboard,
- *                     then watches for the run to appear and attaches to it.
+ *   operator: false   the read-only viewer. `ares trial` prints the command
+ *                     for you to run yourself and copies it to the clipboard.
+ *                     Whatever you run in a shell -- `ares trial`, an n-trial
+ *                     `ares drill`, `ares drill --target` -- the page attaches
+ *                     to each new run as it appears (shell.js follows them).
  *   operator: true    `python -m web.server --operator`. The same command is
  *                     POSTed, and the job's output streams back in here while
  *                     the scene plays the evidence as it lands.
@@ -37,9 +39,10 @@ const line = (tag, text) => ({ tag, text });
 
 const HELP = [
   line("sys", "commands:"),
-  line("", "  ares drill [recording] [--model ID] [--goal TEXT] [--no-kill]"),
+  line("", "  ares trial [recording] [--model ID] [--goal TEXT] [--no-kill]"),
   line("", "             [--max-steps N] [--max-tokens N] [--max-wall-seconds N]"),
   line("", "  runs                 list the runs with evidence on disk"),
+  line("", "  follow on|off        attach to each new run as it starts (on by default)"),
   line("", "  open <run|latest>    replay that run in the sandbox"),
   line("", "  demo                 the scripted demo run"),
   line("", "  clear                clear this console"),
@@ -69,7 +72,7 @@ export function tokenize(text) {
 }
 
 /**
- * `ares drill ...` -> { req, errors }.
+ * `ares trial ...` -> { req, errors }.
  *
  * Only these flags exist. Anything else is an error rather than something
  * passed along, which is what keeps the request a set of fields instead of a
@@ -110,9 +113,10 @@ export function parseDrill(argv, recordings = []) {
   return { req, errors };
 }
 
-/** The `ares drill` line a request is equivalent to, for the echo. */
+/** The `ares trial` line a request is equivalent to, for the echo. One trial:
+ *  on the CLI, `ares drill` is the n-trial runner and takes none of these. */
 export function drillCommand(req) {
-  const parts = ["ares", "drill"];
+  const parts = ["ares", "trial"];
   if (req.recording) parts.push(req.recording);
   if (req.model) parts.push("--model", req.model);
   if (req.goal) parts.push("--goal", JSON.stringify(req.goal));
@@ -253,7 +257,14 @@ export function Terminal({ open, replay, session, onCommand, busy, caps }) {
     }
   };
 
-  const shown = pending < 0 ? lines : lines.slice(0, pending);
+  // Every line already typed stays on screen wherever it sits. Showing only
+  // the lines *before* the first untyped one meant a new line arriving above
+  // the replay (a session message) hid the whole replay until it finished.
+  const rendered = lines.map((e, i) => (typed.current.has(e)
+    ? html`<${Line} key=${i} entry=${e} text=${e.text} />`
+    : i === pending
+      ? html`<${Line} key=${i} entry=${e} text=${(e.text || "").slice(0, chars)} />`
+      : null));
   return html`
     <aside class=${`console ${open ? "console-open" : ""}`} aria-label="Drill console"
            aria-hidden=${!open}>
@@ -267,8 +278,7 @@ export function Terminal({ open, replay, session, onCommand, busy, caps }) {
         <div class="console-scroll">
           <div class="console-body" ref=${bodyRef} onScroll=${measure} role="log"
                aria-live="polite">
-            ${shown.map((e, i) => html`<${Line} key=${i} entry=${e} text=${e.text} />`)}
-            ${typing && html`<${Line} entry=${typing} text=${(typing.text || "").slice(0, chars)} />`}
+            ${rendered}
             ${/* While a drill runs the prompt is not a prompt: there is nothing
                   it could accept, so it shows what is running instead of an
                   input you can type into and have ignored. */ ""}

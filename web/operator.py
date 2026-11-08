@@ -105,12 +105,13 @@ _lock = threading.Lock()
 
 
 def _command_line(req: DrillRequest) -> str:
-    """The `ares drill` invocation equivalent to this request.
+    """The `ares trial` invocation equivalent to this request (one trial; on the
+    CLI `ares drill` is the n-trial runner and takes none of these options).
 
     Echoed into the terminal so what the page did is reproducible in a shell --
     the CLI stays the real interface even when the click happened here.
     """
-    parts = ["ares", "drill"]
+    parts = ["ares", "trial"]
     if req.recording:
         parts.append(req.recording)
     if req.model:

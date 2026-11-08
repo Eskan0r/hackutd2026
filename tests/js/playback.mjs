@@ -130,7 +130,7 @@ ok("there is no way to smuggle a command through",
    parseDrill(["; rm -rf /"]).req.recording === "; rm -rf /");
 eq("the echoed command round-trips",
    drillCommand({ recording: "fetch_through", kill: false, max_steps: 5 }),
-   "ares drill fetch_through --max-steps 5 --no-kill");
+   "ares trial fetch_through --max-steps 5 --no-kill");
 
 /* ---- the bubble survives a log-only beat, the same way either route ---- */
 {

@@ -4,12 +4,17 @@
  * draws a sandbox) because this is the only part of the page that talks to the
  * server about anything other than reading evidence.
  *
- * `ares drill` has two paths, and which one you get is the server's answer to
- * /api/capabilities, never a guess:
+ * Follow mode (on by default) polls /api/runs and attaches to every run that
+ * appears after the page loaded, so a drill started in a shell -- one trial,
+ * n trials, or the whole `--target` loop -- plays here as it happens, each
+ * trial in turn. Runs already on disk at load are left alone; `runs` and
+ * `open` reach those.
  *
- *   read-only   print the command, copy it to the clipboard, then watch
- *               /api/runs for the run it produces and attach to it. The page
- *               starts nothing; you run it, the page follows along.
+ * `ares trial` (or `ares drill`) typed here has two paths, and which one you
+ * get is the server's answer to /api/capabilities, never a guess:
+ *
+ *   read-only   print the command and copy it to the clipboard. The page
+ *               starts nothing; you run it, follow mode picks the run up.
  *   operator    POST it, stream the job back, and attach to the run as soon as
  *               the drill mints its id -- so the sandbox plays the evidence
  *               while the trial is still going.
@@ -18,8 +23,7 @@ import { drillCommand, line, parseDrill, tokenize, HELP } from "/static/ui/termi
 
 const { useCallback, useEffect, useRef, useState } = React;
 
-const WATCH_MS = 2000;      // how often to look for the run a typed command made
-const WATCH_FOR_MS = 240000; // how long to keep looking before giving up
+const FOLLOW_MS = 2000;     // how often follow mode looks for a new run
 
 const BANNER = [
   line("sys", "ares -- a fire drill for AI agent containment"),
@@ -43,7 +47,9 @@ export function useShell({ onLoad }) {
   const [session, setSession] = useState(BANNER);
   const [caps, setCaps] = useState({ operator: false, recordings: [], default_goal: null });
   const [busy, setBusy] = useState(false);
-  const watchRef = useRef(null);
+  const [follow, setFollow] = useState(true);
+  const busyRef = useRef(false);
+  busyRef.current = busy;
   const sourceRef = useRef(null);
 
   const say = useCallback((entries) => {
@@ -65,38 +71,42 @@ export function useShell({ onLoad }) {
     return () => { live = false; };
   }, [say]);
 
-  // Stop watching/streaming when the page goes away.
-  useEffect(() => () => {
-    clearInterval(watchRef.current);
-    sourceRef.current?.close();
-  }, []);
+  // Stop streaming when the page goes away.
+  useEffect(() => () => sourceRef.current?.close(), []);
 
-  /** Poll /api/runs until a run id that was not there before shows up. */
-  const watchForNewRun = useCallback(async () => {
-    clearInterval(watchRef.current);
-    let before = new Set();
-    try {
-      const { runs } = await (await fetch("/api/runs")).json();
-      before = new Set(runs.map((r) => r.run_id));
-    } catch { /* first poll will just see everything as new; harmless */ }
-    say([line("sys", "watching for a new run...")]);
-    const until = Date.now() + WATCH_FOR_MS;
-    watchRef.current = setInterval(async () => {
-      if (Date.now() > until) {
-        clearInterval(watchRef.current);
-        say([line("warn", "stopped watching; run `runs` to list what is on disk")]);
-        return;
-      }
+  /* Follow mode. `seen` is every run key on disk; the first successful poll
+   * only fills it, so history does not count as new. After that, each key that
+   * turns up is a run that started while the page was open: attach to the
+   * newest. An n-trial drill makes a fresh run id per trial, so this walks the
+   * trials in order. While an operator job is streaming, followJob already
+   * attaches to its run, so this stays out of the way (but still notes keys). */
+  const seenRef = useRef(null);
+  useEffect(() => {
+    if (!follow) return undefined;
+    let alive = true;
+    const poll = async () => {
+      let runs;
       try {
-        const { runs } = await (await fetch("/api/runs")).json();
-        const fresh = runs.find((r) => !before.has(r.run_id));
-        if (!fresh) return;
-        clearInterval(watchRef.current);
-        say([line("sys", `attached to ${fresh.run_id}`)]);
-        onLoad({ kind: "run", key: fresh.key, live: true });
-      } catch { /* server restarting; keep trying */ }
-    }, WATCH_MS);
-  }, [onLoad, say]);
+        ({ runs } = await (await fetch("/api/runs")).json());
+      } catch { return; }   // server restarting; the next tick tries again
+      if (!alive) return;
+      if (!seenRef.current) { seenRef.current = new Set(runs.map((r) => r.key)); return; }
+      const fresh = runs.filter((r) => !seenRef.current.has(r.key));
+      fresh.forEach((r) => seenRef.current.add(r.key));
+      if (!fresh.length || busyRef.current) return;
+      // /api/runs is newest first; hand them over in the order they started.
+      // The scene queues each behind whatever is still playing, so a fast CLI
+      // never cuts an animation short -- the page runs at its own pace.
+      // No console line per arrival: the playback bar shows what is next, and
+      // each run's own header is printed when it actually starts playing.
+      fresh.slice().reverse().forEach((r) => {
+        onLoad({ kind: "run", key: r.key, live: true, follow: true, runId: r.run_id });
+      });
+    };
+    poll();
+    const timer = setInterval(poll, FOLLOW_MS);
+    return () => { alive = false; clearInterval(timer); };
+  }, [follow, onLoad, say]);
 
   /** Stream an operator job's output into the session. */
   const followJob = useCallback((jobId) => {
@@ -145,12 +155,11 @@ export function useShell({ onLoad }) {
         line("", ok ? "  (copied to the clipboard)"
                     : "  (clipboard blocked; copy it from above)"),
         line("", "  for a console that can start one:  python -m web.server --operator"),
-      ]);
-      watchForNewRun();
+      ].concat(follow ? [line("sys", "following: the run will play here when it starts")]
+                      : [line("warn", "follow is off -- `follow on` to attach to it when it starts")]));
       return;
     }
     setBusy(true);
-    clearInterval(watchRef.current);   // not waiting on a shell any more
     try {
       const res = await fetch("/api/drill", {
         method: "POST",
@@ -168,7 +177,7 @@ export function useShell({ onLoad }) {
       setBusy(false);
       say([line("error", `could not reach the operator: ${err.message}`)]);
     }
-  }, [caps.operator, followJob, say, watchForNewRun]);
+  }, [caps.operator, follow, followJob, say]);
 
   const listRuns = useCallback(async () => {
     try {
@@ -217,6 +226,19 @@ export function useShell({ onLoad }) {
     if (head === "help" || head === "?") { say(HELP.map((e) => ({ ...e }))); return; }
     if (head === "clear") { setSession([]); return; }
     if (head === "runs") { await listRuns(); return; }
+    if (head === "follow") {
+      const want = rest[0] === undefined ? !follow : rest[0] === "on";
+      if (rest[0] !== undefined && !["on", "off"].includes(rest[0])) {
+        say([line("error", "follow on, or follow off")]);
+        return;
+      }
+      // Turning it back on starts from what is on disk now, not from whatever
+      // ran while it was off.
+      if (want && !follow) seenRef.current = null;
+      setFollow(want);
+      say([line("sys", want ? "following new runs" : "not following; `open` a run to replay it")]);
+      return;
+    }
     if (head === "demo") {
       say([line("sys", "loading the scripted demo run")]);
       onLoad({ kind: "demo" });
@@ -233,12 +255,12 @@ export function useShell({ onLoad }) {
     }
 
     const [sub, ...args] = rest;
-    if (sub !== "drill") {
+    if (sub !== "drill" && sub !== "trial") {
       // flaws/down change the lab, and this console deliberately cannot. Say
       // so plainly rather than pretending the command does not exist.
       say(sub
-        ? [line("error", `this console only runs \`ares drill\`; \`ares ${sub}\` changes the lab, so it stays in your shell`)]
-        : [line("error", "ares what? try `ares drill`")]);
+        ? [line("error", `this console only runs \`ares trial\`; \`ares ${sub}\` stays in your shell -- follow mode will show its runs here`)]
+        : [line("error", "ares what? try `ares trial`")]);
       return;
     }
     if (busy) {
@@ -248,7 +270,7 @@ export function useShell({ onLoad }) {
     const { req, errors } = parseDrill(args, caps.recordings);
     if (errors.length) { say(errors.map((e) => line("error", e))); return; }
     await startDrill(req, drillCommand(req));
-  }, [busy, caps.recordings, listRuns, onLoad, openRun, say, startDrill]);
+  }, [busy, caps.recordings, follow, listRuns, onLoad, openRun, say, startDrill]);
 
   // `echo` lets the scene hand its outgoing replay log to this history, so
   // the console scrollback stays append-only across runs.

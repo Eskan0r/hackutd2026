@@ -232,10 +232,13 @@ export function cuesFromView(view) {
   return finish(cues);
 }
 
-export function runHeader(view, cues) {
+/* No counts in here: a live run is re-read every time an event lands, and a
+ * header whose text changed with each read would be a new line each time --
+ * which the console then types out again, hiding everything below it. */
+export function runHeader(view) {
   return [
-    line("cmd-echo", `ares drill   ->   run ${view.run_id}`),
-    line("sys", `replaying ${view.timeline.length} evidence events (${cues.length} beats) from ${view.dir}`),
+    line("cmd-echo", `run ${view.run_id}`),
+    line("sys", `replaying evidence from ${view.dir}`),
   ];
 }
 

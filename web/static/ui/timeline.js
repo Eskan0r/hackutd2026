@@ -58,7 +58,9 @@ export function fold(cues, cursor, start) {
     state.cue = cue;
 
     // A respawn undoes a breakout: the fire is out and he is back on his feet.
-    // The demo does this; a real run never does (see director.js).
+    // The demo has its own; a real run's evidence never does (see director.js)
+    // -- the viewer appends a labelled "sandbox reset" cue after the run ends
+    // instead (scene.js), so the evidence itself is never rewritten.
     if (cue.respawn) {
       state.castle = "idle";
       state.phase = "normal";

@@ -66,6 +66,25 @@ function useFitScale(ref) {
 }
 
 const pose = (anim, extra = {}) => ({ anim, flip: false, mode: "loop", ...extra });
+const line = (tag, text) => ({ tag, text });
+const NO_CUES = [];
+
+/* After a run that burned the castle, the sandbox resets on its own once
+ * this long passes with no new beat -- or sooner, when the next run is
+ * ready to play. */
+const IDLE_RESET_MS = 10000;
+
+/** The viewer's own "sandbox reset" beat, appended after a finished run.
+ *  It is a cue so the fold knows the fire is out (scrubbing back past it
+ *  re-lights it), but it is not evidence and its log line says so. */
+function resetCue(after, i) {
+  const at = after ? after.at + (after.hold || 0) : 0;
+  return {
+    i, at, respawn: true, spot: randomSpot(), hold: 1600, label: "reset",
+    say: { tool: null, text: "Okay. Ready for the next one.", tone: "say" },
+    log: [{ tag: "sys", text: "-- sandbox reset (viewer only, not evidence) --", at }],
+  };
+}
 
 /** What identifies the loaded run. Changing it restarts playback. */
 const keyOf = (source) => `${source.kind}:${source.key || source.variant}`;
@@ -150,17 +169,47 @@ function PoyoActor({ manifest, scale, pos, pose: p, phase, say, shaking, puff, o
     </div>`;
 }
 
+const cueSig = (c) =>
+  `${c.at}|${c.label}|${(c.log || []).map((e) => `${e.tag}:${e.text}`).join("\n")}`;
+const lineSig = (e) => `${e.tag}:${e.text}`;
+
+/** `fresh`, with every item that matches one in `old` replaced by that old
+ *  object. The console remembers which lines it has typed *by object*, so a
+ *  live re-read that rebuilt every cue made the whole log look untyped: it
+ *  vanished and typed itself out again on every event. Keeping the objects
+ *  means only what is actually new gets typed. */
+function reuse(fresh, old, sig) {
+  const pool = new Map();
+  old.forEach((o) => {
+    const k = sig(o);
+    pool.set(k, (pool.get(k) || []).concat(o));
+  });
+  return fresh.map((c) => {
+    const matches = pool.get(sig(c));
+    if (!matches || !matches.length) return c;
+    pool.set(sig(c), matches.slice(1));
+    return matches[0];
+  });
+}
+
+const sameItems = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
 /** Load the cues for whatever is on screen: the demo, or a run's evidence.
  *  A live run re-reads itself over SSE and appends, so the timeline grows
- *  while you watch it. */
+ *  while you watch it. `key` says which source the cues belong to, so the
+ *  scene can tell "still loading the new run" from "this run has no cues". */
 function useCues(source) {
-  const [loaded, setLoaded] = useState({ cues: [], header: [], label: "demo" });
+  const [loaded, setLoaded] = useState({ key: null, cues: [], header: [], label: "demo" });
+  const lastRef = useRef(loaded);
 
   useEffect(() => {
     let alive = true;
+    const key = keyOf(source);
+    const publish = (next) => { lastRef.current = next; setLoaded(next); };
     if (source.kind === "demo") {
       const variant = source.variant || "breakout";
-      setLoaded({
+      publish({
+        key,
         cues: demoScript(variant),
         header: demoHeader(variant),
         label: `demo (${variant})`,
@@ -170,8 +219,12 @@ function useCues(source) {
 
     const apply = (view) => {
       if (!alive) return;
-      const cues = cuesFromView(view);
-      setLoaded({ cues, header: runHeader(view, cues), label: view.run_id });
+      const prev = lastRef.current.key === key ? lastRef.current : { cues: [], header: [] };
+      const cues = reuse(cuesFromView(view), prev.cues, cueSig);
+      const header = reuse(runHeader(view), prev.header, lineSig);
+      // A re-read that found nothing new changes nothing on screen.
+      if (prev.key === key && sameItems(cues, prev.cues) && sameItems(header, prev.header)) return;
+      publish({ key, cues, header, label: view.run_id });
     };
     fetch(`/api/run/${encodeURIComponent(source.key)}`)
       .then((r) => (r.ok ? r.json() : null))
@@ -201,79 +254,147 @@ export function Scene() {
   fitRef.current = fit;
   const manifest = usePoyoManifest();
 
-  const startRef = useRef(null);
-  if (!startRef.current) startRef.current = randomSpot();
-  const start = startRef.current;
-
   // What is loaded. The console switches it; ?run=... picks it on first paint.
   const [source, setSource] = useState({ kind: "demo", variant: "breakout" });
   const demoCount = useRef(0);
   const sourceRef = useRef(source);
   const replayRef = useRef([]);
   const freezeRef = useRef(null);
-  const onLoad = useCallback((next) => {
+  // Runs follow mode found while another was still playing, oldest first.
+  const [queue, setQueue] = useState([]);
+  const queueRef = useRef(queue);
+  queueRef.current = queue;
+  // A viewer-side "sandbox reset" appended to the run on screen (see resetCue).
+  const [resetAt, setResetAt] = useState(null);
+
+  /** Put `next` on screen now. */
+  const switchTo = useCallback((next) => {
     const to = next.kind === "demo"
       // Each `demo` alternates, so the same command shows both endings.
       ? { kind: "demo", variant: (demoCount.current += 1) % 2 ? "contained" : "breakout" }
-      : next;
+      : { kind: next.kind, key: next.key, live: Boolean(next.live), runId: next.runId };
     // Loading a different run replaces the replay log. Hand the outgoing one
     // to the console's own history first, so the scrollback stays append-only
     // and a second drill does not wipe what the first one showed. (Reloading
     // the *same* run live is not a change, so nothing is frozen then.)
-    if (keyOf(to) !== keyOf(sourceRef.current)) freezeRef.current?.(replayRef.current);
+    if (keyOf(to) !== keyOf(sourceRef.current)) {
+      freezeRef.current?.(replayRef.current);
+      setResetAt(null);
+    }
     sourceRef.current = to;
     setSource(to);
   }, []);
 
+  /** What the console hands over. A run follow mode found waits its turn
+   *  rather than cutting off the one playing; anything you asked for (open,
+   *  demo, an operator drill) loads straight away. */
+  const onLoad = useCallback((next) => {
+    if (!next.follow) { switchTo(next); return; }
+    const entry = { kind: "run", key: next.key, live: true, runId: next.runId || next.key };
+    if (keyOf(entry) === keyOf(sourceRef.current)) return;
+    setQueue((q) => (q.some((r) => r.key === entry.key) ? q : q.concat(entry)));
+  }, [switchTo]);
+
   useEffect(() => {
     let alive = true;
     requestedRun()
-      .then((key) => { if (alive && key) setSource({ kind: "run", key, live: false }); })
+      .then((key) => {
+        if (!alive || !key) return;
+        sourceRef.current = { kind: "run", key, live: false };
+        setSource(sourceRef.current);
+      })
       .catch(() => { /* stay on the demo */ });
     return () => { alive = false; };
   }, []);
 
-  const { cues, header, label: sourceLabel } = useCues(source);
+  const loaded = useCues(source);
+  const runKey = keyOf(source);
+  // Until the new source's cues arrive, `loaded` still holds the old run's;
+  // nothing may play those against the new run's key.
+  const ready = loaded.key === runKey;
+  const { header } = loaded;
+  // While the next run loads, name it rather than the one it replaces.
+  const sourceLabel = ready ? loaded.label : (source.runId || source.key || "loading");
+  const resetLive = Boolean(resetAt && resetAt.key === runKey);
+  const cues = useMemo(() => {
+    if (!ready) return NO_CUES;
+    return resetLive ? loaded.cues.slice(0, resetAt.upto + 1).concat(resetAt.cue) : loaded.cues;
+  }, [ready, resetLive, resetAt, loaded.cues]);
   const cuesRef = useRef(cues);
   cuesRef.current = cues;
 
   const live = Boolean(source.live);
-  const runKey = keyOf(source);
   const t = useTransport(cues.length, runKey, live);
+  const tRef = useRef(t);
+  tRef.current = t;
   const { session, run, busy, caps, echo } = useShell({ onLoad });
   freezeRef.current = echo;
   const [logsOpen, setLogsOpen] = useState(false);
 
+  // Each run starts wherever Poyo is standing when it loads, so changing runs
+  // never teleports him. The first one picks a random spot.
+  const posRef = useRef(null);
+  const startRef = useRef(null);
+  const startKey = useRef(null);
+  if (startKey.current !== runKey) {
+    startKey.current = runKey;
+    startRef.current = posRef.current ? { ...posRef.current } : randomSpot();
+  }
+  const start = startRef.current;
+  if (!posRef.current) posRef.current = start;
+
   // The authority on what the scene shows at this cursor.
   const target = useMemo(() => fold(cues, t.cursor, start), [cues, t.cursor, start]);
+  // A breakout leaves the castle burning and Poyo gone; that wants a reset
+  // before anything else plays.
+  const needsReset = target.castle !== "idle" || target.phase === "gone";
 
   // ...and the live state the animation moves towards it.
   const [pos, setPos] = useState(start);
   const [poseNow, setPose] = useState(pose("idle"));
   const [phase, setPhase] = useState("normal");   // normal | dust | gone | falling | land
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
   const [say, setSay] = useState(null);
   const [castle, setCastle] = useState("idle");
   const [active, setActive] = useState(null);
   const [shaking, setShaking] = useState(false);
   const [puff, setPuff] = useState(0);
   const [shadow, setShadow] = useState(null);     // landing shadow while falling
-  const posRef = useRef(start);
   const dustDoneRef = useRef(null);
   const prevCursor = useRef(-1);
   const beatDone = useRef(-2);                    // the cursor whose beat finished
+  const [beatTick, setBeatTick] = useState(0);    // ...as state, for effects to see
+  const jumpRef = useRef(false);                  // skipped ahead; waiting for cues
+  const glideRef = useRef(false);                 // animate into a jumped-to beat
+  const advanceRef = useRef(false);               // step onto the reset cue
   const onBeatDoneRef = useRef(t.onBeatDone);
   onBeatDoneRef.current = t.onBeatDone;
   const movingRef = useRef(t.moving);
   movingRef.current = t.moving;
+
+  const finishBeat = (cursor) => {
+    beatDone.current = cursor;
+    setBeatTick((n) => n + 1);
+  };
 
   /* --- the one effect that drives the picture ---------------------------- */
   useEffect(() => {
     if (!manifest) return undefined;
     const list = cuesRef.current;
     const cursor = t.cursor;
+    // Loading a run, or skipped ahead and waiting to land on its newest beat:
+    // hold the picture exactly as it is rather than snapping to a stale fold.
+    if (!ready || jumpRef.current) {
+      prevCursor.current = -1;
+      beatDone.current = -2;
+      return undefined;
+    }
     const prev = prevCursor.current;
     prevCursor.current = cursor;
     const cue = list[cursor];
+    const glide = Boolean(cue) && glideRef.current;
+    glideRef.current = false;
     let alive = true;
     const ok = () => alive;
 
@@ -291,12 +412,12 @@ export function Scene() {
       setPose(pose(s.phase === "gone" ? "panic" : s.active ? `use-${s.face}` : "idle"));
     };
 
-    // Only a single step forward is animated. Everything else -- a scrub, a
-    // step back, a newly loaded run -- snaps, because there is no sensible
-    // animation for "three beats ago".
-    if (!cue || cursor !== prev + 1) {
+    // Only a single step forward is animated, plus the one beat a skip-ahead
+    // lands on. Everything else -- a scrub, a step back, a newly loaded run --
+    // snaps, because there is no sensible animation for "three beats ago".
+    if (!cue || (cursor !== prev + 1 && !glide)) {
       snap();
-      beatDone.current = cursor;
+      finishBeat(cursor);
       return () => { alive = false; };
     }
 
@@ -403,7 +524,8 @@ export function Scene() {
       setPhase("gone");
     }
 
-    /** Thud, sit, get up, dust off, carry on. The demo only. */
+    /** Thud, sit, get up, dust off, carry on: the demo's recovery, and the
+     *  viewer's sandbox reset between real runs. */
     async function playRespawn(cueNow) {
       setCastle("idle");                            // fire out, alarm winds up
       await wait(ALARM_RAISE_MS + 280);             // ...and is gone before he drops
@@ -430,7 +552,32 @@ export function Scene() {
       setSay(cueNow.say || null);
     }
 
+    /** Get from whatever is on screen to the state just before a beat we
+     *  skipped ahead to, without a hard cut: if he is gone and the run has him
+     *  standing, he drops back in; if the run has already burned the castle,
+     *  it burns here too; otherwise only the bubble and the castle catch up.
+     *  The beat itself then plays as usual, walking from where he stands. */
+    async function glideInto() {
+      const before = cursor > 0 ? fold(list, cursor - 1, start) : initial(start);
+      const shownGone = phaseRef.current === "gone" || phaseRef.current === "dust";
+      setShaking(false);
+      setShadow(null);
+      if (shownGone && before.phase !== "gone") {
+        await playRespawn({ spot: before.pos, say: before.say });
+      } else if (!shownGone && before.phase === "gone") {
+        await playBreakout(before.face);
+      } else {
+        if (shownGone) setPhase("gone");          // a half-finished crumble
+        setCastle(before.castle);
+        setSay(before.say);
+      }
+    }
+
     (async () => {
+      if (glide) {
+        await glideInto();
+        if (!ok()) return;
+      }
       if (cue.say !== undefined) setSay(cue.say);
       setActive(null);
 
@@ -456,18 +603,19 @@ export function Scene() {
       await wait(cue.hold || 0);
       if (!ok()) return;
       setActive(null);
-      beatDone.current = cursor;
+      finishBeat(cursor);
+      // The demo is filler: with a real run waiting, it stops after the beat
+      // it is on instead of playing on, and the hand-off below takes over.
+      if (sourceRef.current.kind === "demo" && queueRef.current.length) return;
       onBeatDoneRef.current();
     })();
 
     return () => { alive = false; };
-    // `runKey` is here so that loading a different run re-snaps the scene even
-    // when the cursor happens to be unchanged (both -1, say) -- otherwise a
-    // castle left burning by the previous run would still be alight under the
-    // new one's first beat. `cues` is deliberately NOT a dependency: a live
-    // drill appends to it constantly, and re-running this would restart the
-    // beat that is already playing.
-  }, [manifest, t.cursor, start, runKey]);
+    // `runKey` and `ready` are here so that loading a different run re-snaps
+    // the scene even when the cursor happens to be unchanged (both -1, say).
+    // `cues` is deliberately NOT a dependency: a live drill appends to it
+    // constantly, and re-running this would restart the beat already playing.
+  }, [manifest, t.cursor, start, runKey, ready]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   /* A live drill appends cues while we watch. If the current beat has already
    * played out and we are still playing, pick the new one up -- the effect
@@ -476,7 +624,95 @@ export function Scene() {
     if (t.playing && beatDone.current === t.cursor && t.cursor < cues.length - 1) {
       t.onBeatDone();
     }
-  }, [cues.length, t.playing, t.cursor]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [cues.length, t.playing, t.cursor, beatTick]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* --- between runs --------------------------------------------------------
+   * The current run is "drained" once its last beat has played (the demo
+   * only needs its current beat: it is filler, and real evidence outranks
+   * it). A queued run takes over only then -- after a sandbox reset, if the
+   * run left the castle burning -- so nothing is cut off mid-animation. */
+  const isDemo = source.kind === "demo";
+  const drained = ready && !jumpRef.current && beatDone.current === t.cursor
+    && (t.cursor >= cues.length - 1 || (isDemo && !resetLive));
+
+  /** Append the reset cue after the beat on screen, and step onto it. */
+  const beginReset = () => {
+    const upto = t.cursor;
+    setResetAt({ key: runKey, upto, cue: resetCue(cues[upto], upto + 1) });
+    advanceRef.current = true;
+  };
+  const beginResetRef = useRef(beginReset);
+  beginResetRef.current = beginReset;
+
+  // Step onto the reset cue once it is in the list (forward() clamps to the
+  // length it was made with, so it has to wait for the render that grew it).
+  useEffect(() => {
+    if (advanceRef.current && resetLive && t.cursor < cues.length - 1) {
+      advanceRef.current = false;
+      t.forward();
+    }
+  }, [resetLive, cues.length, t.cursor]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A run is waiting: reset if needed, then hand over.
+  useEffect(() => {
+    if (!queue.length || !drained || advanceRef.current) return;
+    if (needsReset && !resetLive) { beginResetRef.current(); return; }
+    const [next, ...rest] = queue;
+    setQueue(rest);
+    switchTo(next);
+  }, [queue, drained, needsReset, resetLive, switchTo]);
+
+  // Nothing waiting: a burning castle on a finished live run resets by itself
+  // after IDLE_RESET_MS with no new beat and no new run -- whichever is first.
+  useEffect(() => {
+    if (queue.length || !drained || !live || !t.playing || !needsReset || resetLive) return undefined;
+    if (t.cursor < cues.length - 1) return undefined;
+    const id = setTimeout(() => beginResetRef.current(), IDLE_RESET_MS);
+    return () => clearTimeout(id);
+  }, [queue.length, drained, live, t.playing, needsReset, resetLive, t.cursor, cues.length, beatTick]);
+
+  /** Step forward, or -- with runs queued -- skip to the newest one and land
+   *  on the beat the CLI has reached. Skipped runs stay on disk for `open`. */
+  const skipAhead = useCallback(() => {
+    const q = queueRef.current;
+    if (!q.length) { tRef.current.forward(); return; }
+    const newest = q[q.length - 1];
+    setQueue([]);
+    jumpRef.current = true;
+    // Switch first: that files the outgoing run's log into the history, so
+    // this note lands after it, where it happened.
+    switchTo(newest);
+    echo([line("sys", q.length > 1
+      ? `skipped ahead to ${newest.runId} (passed ${q.length - 1}; \`runs\` lists them)`
+      : `skipped ahead to ${newest.runId}`)]);
+  }, [echo, switchTo]);
+
+  // The jumped-to run's cues are in: land on its newest beat, gliding in. A
+  // run with no beats yet keeps waiting -- landing on "nothing" would snap.
+  useEffect(() => {
+    if (!jumpRef.current || !ready || !cues.length) return;
+    jumpRef.current = false;
+    glideRef.current = true;
+    t.seek(cues.length - 1);
+  }, [ready, cues.length]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Arrow keys drive the same buttons, unless you are typing in the console.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.target.closest && e.target.closest("input, textarea, select, [contenteditable]")) return;
+      if (e.key === "ArrowRight") { e.preventDefault(); skipAhead(); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); tRef.current.back(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [skipAhead]);
+
+  // The bar's forward button is the skip when something is queued, and is
+  // live even at the end of the current run.
+  const bar = { ...t, forward: skipAhead, atEnd: t.atEnd && !queue.length };
+  const nextUp = queue.length
+    ? ` · next: ${queue[0].runId}${queue.length > 1 ? ` +${queue.length - 1}` : ""}`
+    : "";
 
   const stage = { width: `${STAGE_W * scale}px`, height: `${STAGE_H * scale}px` };
   const c = CASTLE_ANIMS[castle];
@@ -511,7 +747,8 @@ export function Scene() {
         </div>
         <${Alarm} on=${castle !== "idle"} scale=${scale} ox=${ox} oy=${oy} />
       </div>
-      <${Controls} t=${t} label=${target.label} source=${live ? `${sourceLabel} · live` : sourceLabel} />
+      <${Controls} t=${bar} label=${target.label}
+        source=${`${sourceLabel}${live ? " · live" : ""}${nextUp}`} />
       </div>
       <${Terminal} open=${logsOpen} replay=${replay} session=${session} onCommand=${run}
         busy=${busy} caps=${caps} />
