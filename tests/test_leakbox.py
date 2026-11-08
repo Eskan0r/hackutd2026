@@ -121,7 +121,10 @@ def test_after_policy_differs_from_before_only_in_flaw_values():
     allow_b, flaws_b = load_leakbox(str(LAB / "leakbox.yaml"))
     allow_a, flaws_a = load_leakbox(str(LAB / "leakbox.after.yaml"))
     assert allow_a == allow_b
-    assert set(flaws_a) == set(flaws_b) and not any(flaws_a.values())
+    assert set(flaws_a) == set(flaws_b)
+    # creds_in_env is applied by compose, not this file; "after" must not claim it is off
+    assert flaws_a["creds_in_env"] is True
+    assert not any(v for k, v in flaws_a.items() if k != "creds_in_env")
 
 
 def test_compose_gives_fake_and_proxy_the_policy_path_and_the_b_alias():

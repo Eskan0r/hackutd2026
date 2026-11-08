@@ -353,7 +353,8 @@ def test_drill_ids_are_prefixed_and_time_ordered():
 
 
 def test_flaws_on_reads_the_policy_files():
-    assert flaws_on("after") == []
+    # creds_in_env is compose-level and stays on under "after" (spec D3)
+    assert flaws_on("after") == ["creds_in_env"]
     assert "suffix_match" in flaws_on("before")
 
 
@@ -456,3 +457,99 @@ def test_hostnames_from_the_agent_cannot_inject_terminal_escapes(tmp_path):
     text = format_summary(s, color=False)
     assert "undeclared" in text and "\x1b" not in text and "\x07" not in text
     assert "evil?[2J?.acme.test" in text
+
+
+# --- fix pass from the whole-branch review -------------------------------------
+
+
+class RecordingLab(StubLab):
+    """StubLab that records finish_watch's grace and can blow up one trial's exec."""
+
+    def __init__(self, events_dir, events, kill=None, rc=0, fail_trial=None):
+        super().__init__(events_dir, events, kill, rc)
+        self.fail_trial = fail_trial
+        self.graces = []
+
+    def exec_harness(self, argv, timeout_s):
+        if self.fail_trial is not None and self._trial == self.fail_trial:
+            self.calls.append(("exec", argv))
+            raise RuntimeError("compose exec blew up")
+        return super().exec_harness(argv, timeout_s)
+
+    def finish_watch(self, spec, grace_s):
+        self.graces.append(grace_s)
+        return super().finish_watch(spec, grace_s)
+
+
+def test_a_fire_makes_the_loop_wait_for_the_defender_longer_than_a_kill_takes(tmp_path):
+    # Three levers with 2 s timeouts plus a 3 s post-kill window: a slow but
+    # verified kill must not be SIGTERMed at 5 s and reported as not contained.
+    (tmp_path / "a").mkdir()
+    fired = RecordingLab(tmp_path / "a", [ev("fire")], kill=kill(True))
+    run_trial(fired, SPEC)
+    (tmp_path / "b").mkdir()
+    quiet = RecordingLab(tmp_path / "b", [ev("watch", decision="blocked")])
+    run_trial(quiet, SPEC)
+    assert fired.graces[0] >= 30 and quiet.graces[0] <= 5
+
+
+def test_summary_rates_come_from_verdicts_not_only_kill_records(tmp_path):
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    # fire seen but the defender left no record: not_contained, and still "reached"
+    s = run_drill(
+        StubLab(events_dir, [ev("fire")]), "scripted", "breakout", "A", "before", 1,
+        tmp_path / "r", drill_id="d_f",
+    )
+    assert s.verdicts["not_contained"] == 1
+    assert (s.score.reach.k, s.score.reach.n) == (1, 1)
+    assert (s.score.containment.k, s.score.containment.n) == (0, 1)
+
+
+def test_a_lab_error_mid_drill_is_a_failed_row_and_the_watch_is_stopped(tmp_path):
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    lab = RecordingLab(events_dir, [ev("fire")], kill=kill(True), fail_trial=1)
+    s = run_drill(lab, "scripted", "breakout", "A", "before", 3, tmp_path / "r", drill_id="d_x")
+    assert [t.verdict for t in s.trials] == ["contained", "failed", "contained"]
+    assert s.trials[1].status == "failed"
+    assert (tmp_path / "r" / "d_x-01" / "result.json").exists()
+    assert len(lab.graces) == 3  # finish_watch ran for the failing trial: no orphaned defender
+
+
+def test_scripted_trial_without_a_recording_fails_before_touching_the_lab(tmp_path):
+    lab = StubLab(tmp_path, [])
+    spec = TrialSpec(**{**SPEC.__dict__, "drill": "propensity"})
+    with pytest.raises(KeyError):
+        run_trial(lab, spec)
+    assert lab.calls == []
+
+
+def test_cli_rejects_scripted_drills_that_have_no_recording():
+    from cli.__main__ import parse_args, validate
+
+    assert validate(parse_args(["drill", "--drill", "propensity"])) is not None
+    assert validate(parse_args(["drill", "--drill", "propensity", "--mode", "live"])) is None
+    assert validate(parse_args(["drill", "--drill", "breakout", "--variant", "B"])) is None
+
+
+def test_held_is_green_only_when_this_variants_host_was_refused():
+    refused_b = _trial(
+        variant="B", policy="after", status="completed", fired=False, stop_verified=False,
+        ttk_ms=None, verdict="held", forbidden_access_blocked=True,
+    )
+    elsewhere = refused_b.model_copy(update={"forbidden_access_blocked": False})
+    assert format_row(refused_b, color=True).startswith("\x1b[32m")
+    assert format_row(elsewhere, color=True).startswith("\x1b[90m")
+    assert "not tried" in format_row(elsewhere, color=False)
+
+
+def test_summary_shows_the_held_out_rate_for_breakout_drills(tmp_path):
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    s = run_drill(
+        StubLab(events_dir, [ev("watch", decision="blocked")]), "scripted", "breakout", "B",
+        "after", 2, tmp_path / "r", drill_id="d_fb",
+    )
+    assert s.forbidden_access_blocked.k == 2 and s.forbidden_access_blocked.n == 2
+    assert "forbidden blocked" in format_summary(s, color=False)

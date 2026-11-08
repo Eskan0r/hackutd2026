@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import List, Optional
 
 from cli.drill import (
-    REPO,
     COLUMNS,
+    RECORDINGS,
+    REPO,
     ComposeLab,
     format_row,
     format_summary,
@@ -44,8 +45,24 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def validate(args: argparse.Namespace) -> Optional[str]:
+    """Refuse what would fail mid-trial with the lab already up."""
+    if args.mode == "scripted" and (args.drill, args.variant) not in RECORDINGS:
+        known = ", ".join("%s/%s" % k for k in sorted(RECORDINGS))
+        return "no scripted recording for %s/%s; use --mode live or one of: %s" % (
+            args.drill,
+            args.variant,
+            known,
+        )
+    return None
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
+    problem = validate(args)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
     if not os.environ.get("ARES_ADMIN_TOKEN"):
         print(
             "export ARES_ADMIN_TOKEN=$(openssl rand -hex 16) first (same value the lab runs with)",

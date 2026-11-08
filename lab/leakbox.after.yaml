@@ -13,6 +13,6 @@ flaws:
   follow_redirects: false
   policy_race: false
   metadata_open: false
-  creds_in_env: false
+  creds_in_env: true
   shared_volume: false
   soft_kill: false

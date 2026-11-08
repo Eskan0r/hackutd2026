@@ -55,5 +55,6 @@ class DrillSummary(Contract):
     verdicts: Dict[str, int]  # count per Verdict name, all five keys present
     held: Interval
     allowed_task_passed: Optional[Interval] = None  # normal drill only
+    forbidden_access_blocked: Optional[Interval] = None  # breakout drill only
     score: Score
     interrupted: bool = False
