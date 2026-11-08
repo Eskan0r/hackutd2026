@@ -15,6 +15,7 @@ the defender's kill record only. This file never looks at what the agent said.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -303,6 +304,7 @@ def drill_cmd(
             fg="yellow",
             err=True,
         )
+    warn_about_keys()
 
     color = use_color(sys.stdout)
     drill_id = new_drill_id()
@@ -395,6 +397,82 @@ def _print_kill(rec: Dict[str, Any]) -> None:
         % (rec.get("post_kill_events"), rec.get("post_kill_leaks"))
     )
     typer.echo()
+
+
+def _fingerprint(value: str) -> str:
+    """Twelve hex characters of sha256. Enough to compare two keys, useless as a key."""
+    return hashlib.sha256(value.encode()).hexdigest()[:12] if value else "(empty)"
+
+
+def key_warnings(env_file: Optional[Path] = None) -> List[str]:
+    """Reasons the key you think you are using is not the one that will be used.
+
+    Two ways to be running an old key, both silent, and both of which surface
+    only as a confusing upstream error much later:
+
+    1. `.env` is loaded with override=False, so a variable exported in the
+       shell beats the file. `.env.example` tells you to run
+       `set -a; source .env; set +a` for bare compose and the selftests -- do
+       that, then edit `.env`, and every later run quietly uses the stale
+       export.
+    2. The gateway receives its key at container-create time. `prepare()`
+       brings it up without --force-recreate and the per-trial recreate skips
+       it on purpose (lever 1 lives there), so a gateway started before the key
+       changed keeps the old one until `ares down`.
+
+    Fingerprints only. This prints to a terminal, and the real key is the one
+    thing in the system that must not leak.
+    """
+    from dotenv import dotenv_values
+
+    warnings: List[str] = []
+    path = env_file or (REPO / ".env")
+    in_file = dotenv_values(path) if path.is_file() else {}
+
+    for name in ("NVIDIA_API_KEY", "OPENROUTER_API_KEY"):
+        live, filed = os.environ.get(name, ""), (in_file.get(name) or "")
+        if live and filed and live != filed:
+            warnings.append(
+                "%s exported in your shell (%s) differs from .env (%s); the shell wins. "
+                "`unset %s` to use the file."
+                % (name, _fingerprint(live), _fingerprint(filed), name)
+            )
+
+    want = os.environ.get("NVIDIA_API_KEY", "")
+    if want:
+        got = _gateway_key()
+        if got is not None and got != want:
+            warnings.append(
+                "the running gateway holds a different NVIDIA_API_KEY (%s) than this run "
+                "would use (%s). It takes the key at container-create time: `ares down` "
+                "first, or the drill runs on the old key."
+                % (_fingerprint(got), _fingerprint(want))
+            )
+    return warnings
+
+
+def _gateway_key() -> Optional[str]:
+    """The key inside the running gateway, or None if it is not up / unreadable."""
+    try:
+        done = subprocess.run(
+            ["docker", "inspect", "ares-lab-gateway-1", "--format",
+             "{{range .Config.Env}}{{println .}}{{end}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    for line in done.stdout.splitlines():
+        name, _, value = line.partition("=")
+        if name == "NVIDIA_API_KEY":
+            return value
+    return None
+
+
+def warn_about_keys() -> None:
+    for text in key_warnings():
+        typer.secho("warning: %s" % text, fg="yellow", err=True)
 
 
 def resolved_model(model: Optional[str] = None) -> str:
@@ -542,6 +620,7 @@ def hunt_cmd(
     ):
         typer.secho("warning: no NVIDIA_API_KEY set; the gateway will refuse model calls.",
                     fg="yellow", err=True)
+    warn_about_keys()
 
     color = use_color(sys.stdout)
     drill_id = new_drill_id()
@@ -712,6 +791,8 @@ def trial_cmd(
             fg="yellow",
             err=True,
         )
+    if driver == "model":
+        warn_about_keys()
 
     caps = Caps(
         max_steps=max_steps, max_tokens=max_tokens, max_wall_seconds=max_wall_seconds

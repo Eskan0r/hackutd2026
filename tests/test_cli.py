@@ -592,3 +592,79 @@ def test_hunt_says_so_when_a_fire_had_no_kill_record(hunt, tmp_path):
     (tmp_path / "k.json").unlink(missing_ok=True)
     out = runner.invoke(app, ["hunt"])
     assert "BREACH WITH NO KILL RECORD" in out.output
+
+
+# --- the key you think you are using is the one that gets used --------------
+
+
+def test_an_exported_key_that_differs_from_the_env_file_is_flagged(tmp_path, monkeypatch):
+    """`.env` loads with override=False, so a shell export silently wins.
+
+    `.env.example` tells you to run `set -a; source .env; set +a` for bare
+    compose; do that, then edit .env, and every later run uses the stale
+    export. It only surfaces much later as a confusing upstream error.
+    """
+    from cli import main as m
+    env = tmp_path / ".env"
+    env.write_text("NVIDIA_API_KEY=from-the-file\n")
+    monkeypatch.setenv("NVIDIA_API_KEY", "from-the-shell")
+    monkeypatch.setattr(m, "_gateway_key", lambda: None)
+
+    texts = m.key_warnings(env_file=env)
+    assert len(texts) == 1
+    assert "the shell wins" in texts[0] and "unset NVIDIA_API_KEY" in texts[0]
+
+
+def test_matching_keys_say_nothing(tmp_path, monkeypatch):
+    from cli import main as m
+    env = tmp_path / ".env"
+    env.write_text("NVIDIA_API_KEY=same\n")
+    monkeypatch.setenv("NVIDIA_API_KEY", "same")
+    monkeypatch.setattr(m, "_gateway_key", lambda: "same")
+    assert m.key_warnings(env_file=env) == []
+
+
+def test_a_gateway_holding_an_older_key_is_flagged(tmp_path, monkeypatch):
+    """The gateway takes its key at container-create time, and neither
+    prepare() nor the per-trial recreate refreshes it."""
+    from cli import main as m
+    env = tmp_path / ".env"
+    env.write_text("NVIDIA_API_KEY=current\n")
+    monkeypatch.setenv("NVIDIA_API_KEY", "current")
+    monkeypatch.setattr(m, "_gateway_key", lambda: "stale-key-from-before")
+
+    texts = m.key_warnings(env_file=env)
+    assert len(texts) == 1
+    assert "ares down" in texts[0]
+
+
+def test_no_gateway_running_is_not_a_warning(tmp_path, monkeypatch):
+    from cli import main as m
+    env = tmp_path / ".env"
+    env.write_text("NVIDIA_API_KEY=current\n")
+    monkeypatch.setenv("NVIDIA_API_KEY", "current")
+    monkeypatch.setattr(m, "_gateway_key", lambda: None)
+    assert m.key_warnings(env_file=env) == []
+
+
+def test_warnings_never_contain_the_key(tmp_path, monkeypatch):
+    """These print to a terminal; the real key is the one thing in the system
+    that must not leak."""
+    from cli import main as m
+    secret_file, secret_shell, secret_gw = "FILE-SECRET", "SHELL-SECRET", "GW-SECRET"
+    env = tmp_path / ".env"
+    env.write_text("NVIDIA_API_KEY=%s\n" % secret_file)
+    monkeypatch.setenv("NVIDIA_API_KEY", secret_shell)
+    monkeypatch.setattr(m, "_gateway_key", lambda: secret_gw)
+
+    blob = " ".join(m.key_warnings(env_file=env))
+    assert blob, "expected warnings"
+    for secret in (secret_file, secret_shell, secret_gw):
+        assert secret not in blob
+
+
+def test_a_missing_env_file_is_not_an_error(tmp_path, monkeypatch):
+    from cli import main as m
+    monkeypatch.setenv("NVIDIA_API_KEY", "whatever")
+    monkeypatch.setattr(m, "_gateway_key", lambda: None)
+    assert m.key_warnings(env_file=tmp_path / "nope.env") == []
