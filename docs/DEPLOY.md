@@ -29,18 +29,20 @@ scripts/vm_bootstrap.sh
 ```
 
 The script is safe to re-run. It installs gVisor (`runsc`) and registers it with Docker,
-makes a Python 3.12 venv, and creates `lab/.env` (gitignored) with a generated
-`ARES_ADMIN_TOKEN`. Then add the one real key:
+makes a Python 3.12 venv, and creates `.env` at the repo root (gitignored, mode 600) with
+a generated `ARES_ADMIN_TOKEN`. Then add the one real key:
 
 ```bash
-nano lab/.env        # NVIDIA_API_KEY=nvapi-...
+nano .env            # NVIDIA_API_KEY=nvapi-...
 ```
 
-Compose reads `lab/.env` on its own. Host-side scripts (`selftest-gateway.sh`,
-`python -m defender ...`, the CLI) read the shell environment, so load it first:
+`.env` stays at the repo root on purpose: `lab/` is bind-mounted into the fake and proxy
+containers, so a key there would be inside the lab. Compose and every host-side tool
+(`selftest-gateway.sh`, `python -m defender ...`, the CLI) read the shell environment, so
+load it in each new shell:
 
 ```bash
-set -a; source lab/.env; set +a
+set -a; source .env; set +a
 ```
 
 ## 4. Prove it
@@ -50,8 +52,8 @@ docker info --format '{{json .Runtimes}}' | grep -o runsc      # runsc
 docker run --rm --runtime=runsc alpine dmesg | head -1          # [ 0.000000] Starting gVisor...
 ./.venv/bin/python --version && ./.venv/bin/python -m pytest tests/ -q   # Python 3.12.x, all pass
 (cd lab && ./selftest.sh)              # last line: PASS: flaws ON leak, flaws OFF hold, no internet, events hash-chained
-(cd lab && ./selftest-gateway.sh)      # gateway lane; works without a key (upstream_key_missing)
-./.venv/bin/python -m defender selftest   # last line: SELFTEST PASSED
+(cd lab && ./selftest-gateway.sh)      # gateway lane; with the key loaded this spends a few LLM calls
+./.venv/bin/python -m defender selftest   # last line: SELFTEST PASSED (probe container runs under runsc once .env is loaded)
 sudo ss -ltnp | grep -vE '127.0.0.1|::1|:22 '   # nothing of ours on 0.0.0.0
 ```
 
@@ -77,6 +79,13 @@ Deleting an instance is irreversible. Rotate `NVIDIA_API_KEY` after the event.
 
 ## 7. If gVisor will not start a container
 
-Set `ARES_SANDBOX_RUNTIME=runc` in `lab/.env` and recreate the sandbox
-(`cd lab && docker compose up -d sandbox`). That is the documented fallback: plain runc
-with all capabilities dropped (ARCHITECTURE.md §12). Say so on the slide.
+Set `ARES_SANDBOX_RUNTIME=runc` in `.env`, re-source it (a value already in the shell wins
+over the file), and recreate the sandbox:
+
+```bash
+set -a; source .env; set +a
+(cd lab && docker compose up -d sandbox)
+```
+
+That is the documented fallback: plain runc with all capabilities dropped
+(ARCHITECTURE.md §12). Say so on the slide.

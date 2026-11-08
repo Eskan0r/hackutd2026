@@ -146,5 +146,5 @@ services:
     pids_limit: 256
     mem_limit: 512m
     # gVisor per §7. Docker Desktop has no runsc, so the default is plain runc with
-    # caps dropped (§12). On the Linux VM set ARES_SANDBOX_RUNTIME=runsc in lab/.env.
+    # caps dropped (§12). On the Linux VM set ARES_SANDBOX_RUNTIME=runsc in <repo>/.env.
     runtime: ${ARES_SANDBOX_RUNTIME:-runc}

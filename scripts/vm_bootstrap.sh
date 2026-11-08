@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # One-time (and safely re-runnable) setup of the team VM: gVisor runtime for the
 # sandbox (ARCHITECTURE.md §7), a Python 3.12 venv for the control plane, and
-# lab/.env with a generated admin token. Run as the ubuntu user from the repo root:
+# <repo>/.env with a generated admin token. Run as the ubuntu user from the repo root:
 #   scripts/vm_bootstrap.sh
-# Then put NVIDIA_API_KEY in lab/.env. See docs/DEPLOY.md.
+# Then put NVIDIA_API_KEY in .env. See docs/DEPLOY.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -48,23 +48,30 @@ if ! docker info --format '{{json .Runtimes}}' | grep -q runsc; then
 fi
 
 # 4. Python 3.12 venv (matches python:3.12-slim in the images). 24.04 ships 3.12;
-#    22.04 ships 3.10, so fall back to deadsnakes.
+#    22.04 ships 3.10, so fall back to deadsnakes. python3.12-venv (ensurepip) is a
+#    separate package on both, so install it unconditionally.
 #    shortcut: deadsnakes is a third-party PPA; drop this branch once the Brev image is confirmed 24.04
 if ! command -v python3.12 >/dev/null 2>&1; then
   echo "== installing python3.12 from deadsnakes"
   sudo apt-get install -y -q software-properties-common
   sudo add-apt-repository -y ppa:deadsnakes/ppa
   sudo apt-get update -q
-  sudo apt-get install -y -q python3.12 python3.12-venv
 fi
-[ -d .venv ] || python3.12 -m venv .venv
+sudo apt-get install -y -q python3.12 python3.12-venv
+if [ ! -x .venv/bin/pip ]; then
+  rm -rf .venv                      # a half-made venv (no ensurepip) must not be reused
+  python3.12 -m venv .venv
+fi
 ./.venv/bin/python -m pip install -q -r requirements.txt
 
-# 5. lab/.env: created once from the example, never overwritten (it holds the real key).
-if [ ! -f lab/.env ]; then
-  echo "== creating lab/.env"
-  cp lab/.env.example lab/.env
-  sed -i "s/^ARES_ADMIN_TOKEN=.*/ARES_ADMIN_TOKEN=$(openssl rand -hex 16)/" lab/.env
+# 5. .env at the repo root: created once from the example, never overwritten (it holds
+#    the real key). Not under lab/, which compose bind-mounts into the fake and proxy
+#    containers.
+if [ ! -f .env ]; then
+  echo "== creating .env"
+  cp .env.example .env
+  chmod 600 .env
+  sed -i "s/^ARES_ADMIN_TOKEN=.*/ARES_ADMIN_TOKEN=$(openssl rand -hex 16)/" .env
 fi
 
 # 6. Summary.
@@ -73,4 +80,6 @@ echo "   ubuntu:  $RELEASE"
 echo "   docker:  $(docker --version)"
 echo "   runsc:   $(command -v runsc >/dev/null && echo yes || echo no)"
 echo "   venv:    $(./.venv/bin/python --version)"
-grep -q '^NVIDIA_API_KEY=$' lab/.env && echo "   next:    put NVIDIA_API_KEY in lab/.env"
+if grep -q '^NVIDIA_API_KEY=$' .env; then
+  echo "   next:    put NVIDIA_API_KEY in .env, then:  set -a; source .env; set +a"
+fi

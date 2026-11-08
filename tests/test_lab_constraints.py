@@ -96,3 +96,21 @@ def test_sandbox_runtime_is_an_env_toggle_defaulting_to_runc():
     with open(os.path.join(ROOT, "lab", "docker-compose.yml")) as f:
         compose = yaml.safe_load(f)
     assert compose["services"]["sandbox"]["runtime"] == "${ARES_SANDBOX_RUNTIME:-runc}"
+
+
+def test_secrets_template_is_not_under_any_bind_mounted_directory():
+    """The real key lives in <repo>/.env; .env.example marks where that is. It
+    must not sit under any directory compose bind-mounts into a lab container."""
+    lab = os.path.join(ROOT, "lab")
+    with open(os.path.join(lab, "docker-compose.yml")) as f:
+        compose = yaml.safe_load(f)
+    template = os.path.join(ROOT, ".env.example")
+    assert os.path.exists(template), "expected the env template at the repo root"
+    for name, svc in compose["services"].items():
+        for vol in svc.get("volumes", []):
+            src = vol.split(":")[0]
+            if not src.startswith((".", "/")):
+                continue  # a named volume, not a host path
+            src = os.path.realpath(os.path.join(lab, src))
+            assert os.path.commonpath([src, template]) != src, (
+                "%s bind-mounts %s, which would expose .env" % (name, src))

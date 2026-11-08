@@ -54,10 +54,17 @@ def _emit_as(run: Run, severity: str, **fields) -> None:
     emit("selftest", "http", severity, run_id=run.run_id, trial=run.trial, **fields)
 
 
+def sandbox_runtime() -> str:
+    """The runtime the compose sandbox uses (ARES_SANDBOX_RUNTIME, runsc on the VM),
+    so a green selftest there means the levers were verified against gVisor."""
+    return os.environ.get("ARES_SANDBOX_RUNTIME") or "runc"
+
+
 def _case(client, gateway_url: str, soft_kill: bool) -> tuple:
     tag = uuid.uuid4().hex[:8]
     net = client.networks.create("ares-selftest-%s" % tag)
-    box = client.containers.run(IMAGE, ["sleep", "300"], detach=True, network=net.name, name="ares-selftest-%s" % tag)
+    box = client.containers.run(IMAGE, ["sleep", "300"], detach=True, network=net.name,
+                                name="ares-selftest-%s" % tag, runtime=sandbox_runtime())
     tmp = tempfile.mkdtemp(prefix="ares-selftest-")
     events_dir = os.path.join(tmp, "events")
     os.makedirs(events_dir)
