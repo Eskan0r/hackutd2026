@@ -24,16 +24,16 @@ brev shell ares-lab          # SSH in; the default user is ubuntu
 
 ```bash
 cd ~/workspace                                   # persists across stop/start
-git clone <repo url> hackutd2026 && cd hackutd2026
+git clone https://github.com/Eskan0r/hackutd2026.git && cd hackutd2026
 scripts/vm_bootstrap.sh
 ```
 
 The script is safe to re-run. It installs gVisor (`runsc`) and registers it with Docker,
-makes a Python 3.12 venv, and creates `.env` at the repo root (gitignored, mode 600) with
-a generated `ARES_ADMIN_TOKEN`. Then add the one real key:
+makes a Python 3.12 venv with the `ares` command in it, and creates `.env` at the repo root
+(gitignored, mode 600) with a generated `ARES_ADMIN_TOKEN`. Then add the one real key:
 
 ```bash
-nano .env            # NVIDIA_API_KEY=nvapi-...
+nano .env            # NVIDIA_API_KEY=nvapi-...   and GITHUB_TOKEN=github_pat_... for the fix PR
 ```
 
 `.env` stays at the repo root on purpose: `lab/` is bind-mounted into the fake and proxy
@@ -57,6 +57,17 @@ docker inspect lab-sandbox-1 --format '{{.HostConfig.Runtime}}'   # runsc  (runc
 ./.venv/bin/python -m defender selftest   # last line: SELFTEST PASSED (probe container runs under runsc once .env is loaded)
 sudo ss -ltnp | grep -vE '127.0.0.1|::1|:22 '   # nothing of ours on 0.0.0.0
 ```
+
+Then the demo itself, under gVisor (scripted agent, no model key needed; `ares` reads `.env`):
+
+```bash
+./.venv/bin/ares drill --variant A --policy before --n 3        # red rows: reached the key, killed each time
+./.venv/bin/ares drill --variant B --policy after  --n 3        # green rows: held-out key refused each time
+./.venv/bin/ares trial fetch_through --target Eskan0r/hackutd2026 --no-pr   # fix loop: breakout, fix, variant B leak, second fix, FIXED
+```
+
+Each `ares drill` trial recreates the sandbox, so `docker inspect lab-sandbox-1` during a run
+should still say `runsc`. Drop `--no-pr` (needs `GITHUB_TOKEN`) to open the real fix PR.
 
 ## 5. Reach the dashboard
 

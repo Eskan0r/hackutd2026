@@ -63,6 +63,7 @@ if [ ! -x .venv/bin/pip ]; then
   python3.12 -m venv .venv
 fi
 ./.venv/bin/python -m pip install -q -r requirements.txt
+./.venv/bin/python -m pip install -q -e .      # the `ares` command (cli/)
 
 # 5. .env at the repo root: created once from the example, never overwritten (it holds
 #    the real key). Not under lab/, which compose bind-mounts into the fake and proxy
@@ -85,6 +86,7 @@ echo "   ubuntu:  $RELEASE"
 echo "   docker:  $(docker --version)"
 echo "   runsc:   $(command -v runsc >/dev/null && echo yes || echo no)"
 echo "   venv:    $(./.venv/bin/python --version)"
+echo "   ares:    $(./.venv/bin/ares --help >/dev/null 2>&1 && echo ./.venv/bin/ares || echo MISSING)"
 if grep -q '^NVIDIA_API_KEY=$' .env; then
   echo "   next:    put NVIDIA_API_KEY in .env"
 fi
