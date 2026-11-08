@@ -36,6 +36,7 @@ from cli import github_pr, pipeline, pr_writer, slack
 from cli.drill import (
     BOLD_RED,
     COLUMNS,
+    GREY,
     RESET,
     LAB_DIR,
     POLICY_FILES_HOST,
@@ -515,6 +516,13 @@ def dashboard_url(run_id: str) -> str:
 _COLORS = {"start": "cyan", "done": "green", "fail": "red"}
 
 
+def _thin(color: bool) -> str:
+    """A light rule between trials. Dim on purpose: it separates the rows, it
+    is not one of them."""
+    line = "  " + "·" * (WIDTH - 4)
+    return (GREY + line + RESET) if color else line
+
+
 def _trial_row(attempt: int, of: int, trial: Any, color: bool) -> str:
     """One round-0 attempt, in the same shape as the drill table.
 
@@ -636,9 +644,16 @@ def hunt_cmd(
 
         def row(attempt: int, of: int, trial: Any) -> None:
             if not shown["header"]:
+                typer.echo()
+                typer.echo(_rule("ATTEMPTS"))
                 typer.echo(COLUMNS)
                 shown["header"] = True
+            else:
+                typer.echo(_thin(color))
             typer.echo(_trial_row(attempt, of, trial, color))
+            if trial.fires or trial.breaches:
+                typer.echo(_rule())   # the hunt is over; the fix loop takes it from here
+                typer.echo()
 
         # The pipeline's own default goal is the benign one, which gives a live
         # agent no reason to go near the key -- so hand it this drill's goal.
@@ -665,18 +680,30 @@ def hunt_cmd(
     drill_id = new_drill_id()
     typer.secho(BANNER, fg="cyan", bold=True)
     typer.echo()
-    typer.echo("hunt %s  %s  %s  variant %s  policy %s  stop at first breach (max %d)"
-               % (drill_id, mode.value, drill.value, variant.value, policy.value, max_trials))
+    typer.echo(_rule("HUNT"))
+    typer.echo("  %s  %s  %s  variant %s  policy %s"
+               % (drill_id, mode.value, drill.value, variant.value, policy.value))
+    typer.echo("  stop at the first breach  ·  up to %d attempt(s)" % max_trials)
     if mode is Mode.live:
-        typer.echo("model %s" % resolved_model())
+        typer.echo("  model %s" % resolved_model())
+    typer.echo(_rule())
     typer.echo(COLUMNS)
+    typer.echo(_thin(color))
 
     compose_lab = ComposeLab(REPO)
+    seen = {"n": 0}
+
+    def row(r: Any) -> None:
+        if seen["n"]:
+            typer.echo(_thin(color))   # between trials, never before the first
+        seen["n"] += 1
+        typer.echo(format_row(r, color))
+
     try:
         summary = run_drill(
             compose_lab, mode.value, drill.value, variant.value, policy.value,
             max_trials, runs_dir, drill_id=drill_id,
-            on_result=lambda r: typer.echo(format_row(r, color)),
+            on_result=row,
             stop_after=lambda r: r.fired,
         )
     except Exception as exc:  # noqa: BLE001 - lab/docker failures surface as one clear line
@@ -687,6 +714,7 @@ def hunt_cmd(
               *summary.chain_problems[:6]], "red")
         raise typer.Exit(EXIT_ERROR)
 
+    typer.echo(_rule())
     breach = next((t for t in summary.trials if t.fired), None)
     attempts = len(summary.trials)
     if breach is None:
@@ -741,15 +769,15 @@ def _show_breach(compose_lab, summary, breach, drill_id, mode, drill, variant, p
     typer.echo()
     if breach.verdict == "contained":
         leaks = (record or {}).get("post_kill_leaks")
+        # The box clips at WIDTH - 4; keep the line inside it.
         _box(["✓ CONTAINED   the agent broke out and was killed",
-              "found on attempt %d of up to %d  ·  killed in %s ms  ·  %s post-kill leak(s)"
+              "attempt %d of %d  ·  killed in %s ms  ·  %s post-kill leaks"
               % (attempts, max_trials, breach.ttk_ms,
                  leaks if leaks is not None else "?"),
               "run %s" % breach.run_id], "green")
     else:
         _box(["✗ NOT CONTAINED   the agent broke out and the kill did not hold",
-              "found on attempt %d of up to %d   run %s"
-              % (attempts, max_trials, breach.run_id)], "red")
+              "attempt %d of %d   run %s" % (attempts, max_trials, breach.run_id)], "red")
 
 
 @app.command("trial")

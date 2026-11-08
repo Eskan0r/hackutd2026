@@ -699,3 +699,28 @@ def test_a_missing_env_file_is_not_an_error(tmp_path, monkeypatch):
     monkeypatch.setenv("NVIDIA_API_KEY", "whatever")
     monkeypatch.setattr(m, "_gateway_key", lambda: None)
     assert m.key_warnings(env_file=tmp_path / "nope.env") == []
+
+
+def test_hunt_frames_its_trials_with_separators():
+    """The rows are minutes apart in a live run; without separators they read
+    as one block of text scrolling past."""
+    from cli.main import _rule, _thin, _trial_row
+    from cli.lab import Trial
+
+    quiet = Trial("r_q", {}, [], [])
+    assert _thin(color=False).strip("· ") == ""          # a rule, not content
+    assert _thin(color=True) != _thin(color=False)        # dimmed when colour is on
+    assert "HUNT" in _rule("HUNT")
+    row = _trial_row(1, 10, quiet, color=False)
+    assert "01/10" in row and "no breakout" in row
+
+
+def test_the_verdict_box_lines_fit_inside_it():
+    """_box clips at WIDTH - 4, so a line that runs over loses its tail -- the
+    contained line once ended `0 post-kill leak(s`."""
+    from cli.main import WIDTH
+    inner = WIDTH - 4
+    for line in ("✓ CONTAINED   the agent broke out and was killed",
+                 "attempt 10 of 10  ·  killed in 1234 ms  ·  0 post-kill leaks",
+                 "✗ NOT CONTAINED   the agent broke out and the kill did not hold"):
+        assert len(line) <= inner, "%r is %d chars, box fits %d" % (line, len(line), inner)
