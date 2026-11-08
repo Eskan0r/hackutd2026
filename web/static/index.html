@@ -3,19 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Ares -- Containment Drill</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%236ab04c'/><rect x='2' y='4' width='12' height='9' fill='%23b5793c'/><rect x='3' y='5' width='10' height='7' fill='%23f2d578'/></svg>">
+<title>Ares</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%236ab04c'/><rect x='2' y='4' width='12' height='9' fill='%23b5793c'/><rect x='3' y='5' width='10' height='7' fill='%23dcbc91'/></svg>">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<div id="root"><div class="boot">loading drill&hellip;</div></div>
+<div id="root"></div>
 
-<!-- React is vendored, not loaded from a CDN: the dashboard has to come up on
-     a conference network, or on none at all. -->
+<!-- React is vendored, not loaded from a CDN: the page has to come up on a
+     conference network, or on none at all. -->
 <script src="/static/vendor/react.production.min.js"></script>
 <script src="/static/vendor/react-dom.production.min.js"></script>
-<script src="/static/sprites.js"></script>
-<script src="/static/scene.js"></script>
 <script type="module" src="/static/app.js"></script>
 </body>
 </html>

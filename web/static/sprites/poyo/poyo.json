@@ -1,0 +1,67 @@
+{
+ "cell": [
+  86,
+  95
+ ],
+ "anchor": [
+  42,
+  89
+ ],
+ "anims": {
+  "idle": {
+   "frames": 4,
+   "fps": 4,
+   "loop": true
+  },
+  "walk-s": {
+   "frames": 4,
+   "fps": 8,
+   "loop": true
+  },
+  "walk-n": {
+   "frames": 4,
+   "fps": 8,
+   "loop": true
+  },
+  "walk-e": {
+   "frames": 4,
+   "fps": 10,
+   "loop": true
+  },
+  "walk-w": {
+   "frames": 4,
+   "fps": 10,
+   "loop": true
+  },
+  "sit": {
+   "frames": 5,
+   "fps": 8,
+   "loop": false
+  },
+  "play": {
+   "frames": 4,
+   "fps": 5,
+   "loop": true
+  },
+  "use-s": {
+   "frames": 5,
+   "fps": 6,
+   "loop": true
+  },
+  "use-e": {
+   "frames": 4,
+   "fps": 6,
+   "loop": true
+  },
+  "use-w": {
+   "frames": 4,
+   "fps": 6,
+   "loop": true
+  },
+  "panic": {
+   "frames": 4,
+   "fps": 10,
+   "loop": true
+  }
+ }
+}
