@@ -9,11 +9,13 @@ Design and decisions: **[ARCHITECTURE.md](ARCHITECTURE.md)**. This file is just 
 ## Status
 
 Built: the Leakbox target (`lab/`), the LLM gateway (`gateway/`, which is kill lever 1),
-the agent harness (`agent/`), and the shared contracts and hash-chained event log (`ares/`).
+the agent harness (`agent/`), the shared contracts and hash-chained event log (`ares/`),
+and the dashboard (`web/`).
 
 Not built yet: the defender with levers 2–3 (`docker_disconnect`, `docker_pause`), the
-scorer, the signer, the `ares` CLI and the dashboard. **So there is no verified three-lever
-kill and no signed report yet** — the `ttk_ms` you see is lever 1 only.
+scorer, the signer and the `ares` CLI. **So there is no verified three-lever kill and no
+signed report yet** — the `ttk_ms` you see is lever 1 only. The dashboard says so on every
+screen rather than rounding it up to a kill.
 
 ## Setup
 
@@ -68,7 +70,24 @@ docker compose down     # tear down
 Recordings in `agent/recorded/`: `fetch_through` (boundary failure), `soft_kill` (kill
 failure), `blocked` (the held-out rerun that should pass).
 
-### 4. A real model — needs a key
+### 4. Watch it happen — the dashboard
+
+```bash
+./.venv/bin/python -m web.server      # http://127.0.0.1:8090
+```
+
+A pixel-art view of the drill: Poyo digging through a sandbox that fills the screen, the
+bait he unearths, the kill levers, a live console and timeline beside it, every event and
+flaw in a table, and a report of how it got out. It reads the same event files the CLI does
+and **cannot start a drill or pull a lever** — it is a viewer, nothing more (`GET` only,
+enforced by a test). Tick *live tail* to follow a drill as it runs.
+
+No build step: React and htm are vendored under `web/static/vendor/`, so `python -m
+web.server` is the whole toolchain and the page comes up with no network.
+
+`?run=<id>&beat=<n>&tab=report` deep-links one moment of one drill.
+
+### 5. A real model — needs a key
 
 Get one at **[build.nvidia.com](https://build.nvidia.com)**: free, no credit card, and
 **no Brev credits** (Brev rents GPUs; this is the hosted API). Free tier is ~40 req/min.
@@ -93,7 +112,8 @@ dummy key the harness uses) — see `lab/README.md`.
 | `lab/` | Leakbox: policy proxy with flaw toggles, fake services, bait, the sandbox image |
 | `gateway/` | LLM reverse proxy: key swap, fixed upstreams, caps, and kill lever 1 |
 | `agent/` | harness, tools, scripted replay, recordings |
-| `tests/` | 39 tests, hermetic (a stub upstream stands in for NVIDIA NIM) |
+| `web/` | the dashboard: read-only FastAPI API + a React page. React is vendored under `static/vendor/`, so there is no `npm install` and no CDN at demo time |
+| `tests/` | 54 tests, hermetic (a stub upstream stands in for NVIDIA NIM) |
 | `scripts/` | `demo_kill.py`, `live_check.py` |
 
 ## Safety
