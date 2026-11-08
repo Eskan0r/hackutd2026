@@ -3,7 +3,7 @@
  * Every colour comes from the art: the sandbox's grass and wood, Poyo's ink,
  * fur, hoodie and clasp. Chrome is drawn with hard 1-unit steps (box-shadow
  * stacks), never radii or blur, so it sits in the same pixel world as the
- * sprites. Sprites are scaled by whole numbers only (see useStageScale).
+ * sprites.
  */
 
 :root {
@@ -18,15 +18,21 @@
   --wood: #b5793c;
   --wood-top: #d59a52;
   --wood-lite: #ecb874;
-  --wood-shade: #8a5a2b;
   --sand: #dcbc91;
   --sand-lite: #ead2ad;
   --sand-shade: #b78e62;
+  --paper: #fff8e6;
   --go: #58bf68;
   --go-hover: #63cc73;
   --go-lite: #92e09c;
   --go-dark: #33803f;
   --no-sand: #f0c2b4;
+  --alarm: #e5483a;
+
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --term-bg: #0c0c0c;
+  --term-fg: #cccccc;
+  --term-dim: #767676;
   --step: 120ms;
 }
 
@@ -35,13 +41,10 @@
 html, body {
   margin: 0;
   height: 100%;
-  background-color: var(--grass);
-  /* tufts on the grass, at the same grain as the sandbox's */
-  background-image:
-    radial-gradient(var(--grass-dark) 1px, transparent 1.5px),
-    radial-gradient(var(--grass-dark) 1px, transparent 1.5px);
-  background-size: 44px 36px, 60px 52px;
-  background-position: 6px 10px, 30px 26px;
+  /* a quiet meadow (scripts/make_scene_sprites.py), tiled at 3x */
+  background: var(--grass) url("/static/sprites/meadow.png") repeat;
+  background-size: 576px 576px;
+  image-rendering: pixelated;
   overflow: hidden;
 }
 
@@ -61,34 +64,254 @@ img { image-rendering: pixelated; user-select: none; }
   display: block;
   max-width: none;
   animation-name: strip;
-  animation-iteration-count: infinite;
   will-change: transform;
 }
 
 @keyframes strip {
   from { transform: translateX(0); }
-  to   { transform: translateX(-100%); }
+  to   { transform: translateX(var(--strip-end, -100%)); }
+}
+
+.sprite.flip { transform: scaleX(-1); }
+
+/* a toy hops while Poyo is using it */
+.sprite.hop { animation: hop 400ms steps(2) infinite; }
+@keyframes hop {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 calc(var(--px) * -1.5); }
 }
 
 /* ------------------------------------------------------------ scene */
 
+/* The sandbox fills the window; when the logs open it shares the row with
+ * them and shrinks to fit what is left. */
 .scene {
-  height: 100%;
-  display: grid;
-  place-items: center;
+  position: fixed;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.stage-area {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .stage {
-  position: relative;
-  /* the box casts a stepped shadow onto the grass */
-  filter: drop-shadow(var(--px) var(--px) 0 var(--grass-deep));
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
 }
 
 .ground {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
   display: block;
 }
+
+/* Poyo's position is his feet; the sprite and bubble hang off that point. */
+.actor {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.actor.shake { animation: shake 240ms steps(4) infinite; }
+@keyframes shake {
+  0%, 100% { translate: 0 0; }
+  25% { translate: calc(var(--px) * -1) 0; }
+  75% { translate: var(--px) 0; }
+}
+
+.bubble-anchor {
+  position: absolute;
+  left: 0;
+  translate: -50% 0;
+  z-index: 1000;
+  pointer-events: none;
+}
+/* near a side wall the bubble slides inward; its tail stays over Poyo */
+.anchor-left  { translate: -14% 0; }
+.anchor-right { translate: -86% 0; }
+
+/* Speech bubble: paper box, ink outline, a stepped tail pointing at Poyo. */
+.bubble {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  width: max-content;
+  max-width: 260px;
+  overflow-wrap: anywhere;          /* long URLs wrap inside the box */
+  padding: 8px 12px 9px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 600 15px/1.3 var(--mono);
+  box-shadow:
+    0 -3px 0 var(--ink), 0 3px 0 var(--ink), -3px 0 0 var(--ink), 3px 0 0 var(--ink),
+    3px 6px 0 rgb(38 20 50 / 0.25);
+  animation: pop 160ms steps(2) 1;
+}
+
+.bubble::after {                    /* the tail */
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -12px;
+  width: 9px;
+  height: 9px;
+  translate: -50% 0;
+  background: var(--paper);
+  box-shadow: -3px 0 0 var(--ink), 3px 0 0 var(--ink), 0 3px 0 var(--ink);
+  clip-path: polygon(-3px 0, 12px 0, 12px 12px, 3px 12px, 3px 6px, -3px 6px);
+}
+.bubble-left::after  { left: 14%; }
+.bubble-right::after { left: 86%; }
+/* flipped under Poyo near the top edge: the tail points up at him */
+.bubble-below::after { bottom: auto; top: -12px; rotate: 180deg; }
+
+.bubble-tool {
+  justify-self: start;
+  padding: 1px 6px;
+  background: var(--hoodie);
+  color: var(--paper);
+  font: 700 12px/1.4 var(--mono);
+  letter-spacing: 0.04em;
+}
+
+.bubble-think { color: #5b4a68; font-style: italic; }
+.bubble-think .bubble-tool { background: #6e8ce2; }
+.bubble-alarm { background: #ffe1d6; }
+.bubble-alarm .bubble-tool { background: var(--alarm); }
+.bubble-alarm .bubble-text { color: #8a1c12; font-weight: 800; }
+
+@keyframes pop {
+  from { scale: 0.85; }
+  to   { scale: 1; }
+}
+
+/* ------------------------------------------------------------ logs */
+
+.logs-btn {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 20;
+  padding: 10px 16px 12px;
+  border: 0;
+  cursor: pointer;
+  color: var(--ink);
+  background: var(--wood-top);
+  font: 700 15px/1 var(--mono);
+  letter-spacing: 0.04em;
+  box-shadow:
+    inset 0 var(--px) 0 var(--wood-lite),
+    inset 0 calc(var(--px) * -1) 0 var(--wood),
+    0 -3px 0 var(--ink), 0 3px 0 var(--ink), -3px 0 0 var(--ink), 3px 0 0 var(--ink),
+    0 7px 0 var(--ink);
+}
+.logs-btn:hover { background: var(--wood-lite); }
+.logs-btn:active { translate: 0 3px; box-shadow: 0 -3px 0 var(--ink), 0 3px 0 var(--ink), -3px 0 0 var(--ink), 3px 0 0 var(--ink); }
+.logs-btn:focus-visible { outline: 3px solid var(--clasp); outline-offset: 4px; }
+
+/* The console is a real column beside the sandbox and reads like a command
+ * prompt: black window, grey text, a title bar, a blinking block cursor.
+ * Opening overshoots (stretch) and the panel squashes back; closing winds
+ * up a touch before it snaps shut -- the same cartoon timing as the sprites. */
+.console {
+  --console-w: min(520px, 88vw);
+  position: relative;
+  z-index: 10;
+  flex: none;
+  width: 0;
+  overflow: hidden;
+  background: var(--term-bg);
+  transition: width 360ms cubic-bezier(0.6, -0.45, 0.7, 0.1);
+}
+.console-open {
+  width: var(--console-w);
+  transition: width 520ms cubic-bezier(0.3, 1.65, 0.55, 1);
+}
+
+.console-inner {
+  width: var(--console-w);
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  color: var(--term-fg);
+  border-left: 3px solid var(--ink);
+  transform-origin: right center;
+}
+.console-open .console-inner { animation: squash 520ms ease-out 1; }
+
+@keyframes squash {
+  0%   { transform: scale(1.14, 0.9); }
+  45%  { transform: scale(0.95, 1.05); }
+  75%  { transform: scale(1.02, 0.99); }
+  100% { transform: scale(1, 1); }
+}
+
+.console-bar {
+  padding: 12px 150px 12px 14px;   /* clear of the Show/Hide logs button */
+  background: #1f1f1f;
+  border-bottom: 1px solid #333;
+  font: 13px/1.4 var(--mono);
+  color: var(--term-dim);
+  white-space: nowrap;
+}
+
+.console-scroll {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.console-body {
+  height: 100%;
+  overflow-y: auto;
+  padding: 14px 18px 24px 16px;
+  font: 14px/1.55 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  scrollbar-width: none;            /* native bar hidden ... */
+}
+.console-body::-webkit-scrollbar { display: none; }
+
+.console-thumb {                    /* ... replaced by a thin grey line */
+  position: absolute;
+  right: 4px;
+  width: 2px;
+  background: #4a4a4a;
+  pointer-events: none;
+}
+
+.ln { display: flex; gap: 10px; }
+.ts { color: var(--term-dim); flex: none; }
+.tag { flex: none; width: 6ch; font-weight: 700; }
+.txt { min-width: 0; }
+.prompt { color: var(--term-fg); }
+
+.tag-tool .tag { color: #16c60c; }
+.tag-http .tag { color: #3a96dd; }
+.tag-llm .tag { color: #b4009e; }
+.tag-sys .txt, .tag-out .txt { color: var(--term-dim); }
+.tag-FIRE .tag, .tag-FIRE .txt, .tag-BREACH .tag, .tag-BREACH .txt { color: #e74856; }
+.tag-KILL .tag, .tag-KILL .txt { color: #f9f1a5; }
+.tag-PASS .tag, .tag-PASS .txt { color: #16c60c; }
+
+.cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.1em;
+  vertical-align: text-bottom;
+  background: var(--term-fg);
+  animation: blink 1s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
 
 /* ------------------------------------------------------------ login */
 
@@ -105,11 +328,10 @@ img { image-rendering: pixelated; user-select: none; }
   display: grid;
   gap: calc(var(--px) * 4);
   width: min(360px, calc(100vw - 32px));
-  margin-top: 150px;               /* room for Poyo standing on top */
+  margin-top: 180px;               /* room for Poyo standing on top */
   padding: calc(var(--px) * 7) calc(var(--px) * 6) calc(var(--px) * 6);
   background:
     linear-gradient(var(--wood-lite) 0 var(--px), transparent var(--px)),
-    repeating-linear-gradient(90deg, transparent 0 86px, var(--wood-shade) 86px 88px),
     var(--wood-top);
   box-shadow:
     inset 0 calc(var(--px) * -2) 0 var(--wood),
@@ -130,18 +352,36 @@ img { image-rendering: pixelated; user-select: none; }
   80% { translate: calc(var(--px) * 2) 0; }
 }
 
-/* Poyo stands on the sign: his sprite box is positioned so his feet (the
- * manifest anchor, at 2x) land on the sign's top edge. */
+/* Poyo stands on the sign: a zero-size point at the sign's top centre that
+ * his sprite hangs from by its foot anchor. */
 .sign-poyo {
   position: absolute;
   left: 50%;
-  top: calc(var(--px) * -1);
+  top: -22px;                      /* lifted so his feet clear the sign */
   width: 0;
   height: 0;
 }
 
-.sign-poyo .sprite {
-  translate: -50% -100%;
+.sign-title {
+  margin: 0;
+  color: var(--ink);
+  font: 700 22px/1.2 var(--mono);
+  letter-spacing: 0.02em;
+}
+
+.row { display: grid; gap: calc(var(--px) * 2); }
+
+.label {
+  color: var(--ink);
+  font: 700 14px/1 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.error {
+  margin: 0;
+  color: #7a1d14;
+  font: 700 14px/1.3 var(--mono);
 }
 
 .field {
@@ -172,28 +412,6 @@ img { image-rendering: pixelated; user-select: none; }
     0 0 0 calc(var(--px) * 2) var(--clasp);
 }
 
-.sign-title {
-  margin: 0;
-  color: var(--ink);
-  font: 700 22px/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
-  letter-spacing: 0.02em;
-}
-
-.row { display: grid; gap: calc(var(--px) * 2); }
-
-.label {
-  color: var(--ink);
-  font: 700 14px/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.error {
-  margin: 0;
-  color: #7a1d14;
-  font: 700 14px/1.3 ui-monospace, "Cascadia Mono", Consolas, monospace;
-}
-
 .icon { width: 22px; height: 22px; flex: none; }
 
 .field input {
@@ -203,7 +421,7 @@ img { image-rendering: pixelated; user-select: none; }
   outline: 0;
   background: transparent;
   color: var(--ink);
-  font: 600 18px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font: 600 18px/1.4 var(--mono);
   letter-spacing: 0.04em;
   padding: var(--px) 0;
 }
@@ -218,7 +436,7 @@ img { image-rendering: pixelated; user-select: none; }
   border: 0;
   cursor: pointer;
   color: #fff;
-  font: 700 18px/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font: 700 18px/1 var(--mono);
   letter-spacing: 0.04em;
   text-shadow: 0 2px 0 var(--go-dark);
   background: var(--go);
@@ -250,5 +468,7 @@ img { image-rendering: pixelated; user-select: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .sprite > img { animation-play-state: paused !important; }
-  .sign-no { animation: none; }
+  .sprite.hop, .actor.shake, .sign-no, .bubble { animation: none; }
+  .console, .console-open { transition: none; }
+  .console-open .console-inner { animation: none; }
 }

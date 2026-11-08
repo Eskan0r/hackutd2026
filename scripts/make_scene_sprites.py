@@ -460,6 +460,63 @@ def grass_tuft(c: Canvas, x: int, y: int, col: RGBA) -> None:
         c.set(x + dx, y + dy, col)
 
 
+MEADOW = 192                             # tile size; it repeats seamlessly
+
+
+def meadow_tile() -> Canvas:
+    """Quiet background grass for pages without the sandbox: tufts, clover,
+    a few flowers, two low bushes and a couple of rocks. Everything stays in
+    grass tones (outlined in deep grass, not ink) so it reads as backdrop and
+    never competes with the sign or Poyo. Draws wrap at the edges, so the
+    tile repeats with no seam."""
+    c = Canvas(MEADOW, MEADOW)
+    c.rect(0, 0, MEADOW - 1, MEADOW - 1, GRASS["base"])
+    r = random.Random(77)
+
+    def put(x: float, y: float, col: RGBA) -> None:
+        c.set(int(x) % MEADOW, int(y) % MEADOW, col)
+
+    def blob(cx: float, cy: float, rx: float, ry: float, col: RGBA) -> None:
+        for y in range(int(cy - ry) - 1, int(cy + ry) + 2):
+            for x in range(int(cx - rx) - 1, int(cx + rx) + 2):
+                dx, dy = (x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry
+                if dx * dx + dy * dy <= 1:
+                    put(x, y, col)
+
+    # clover patches: a slightly darker wash, very low contrast
+    for _ in range(5):
+        cx, cy = r.randint(0, MEADOW), r.randint(0, MEADOW)
+        for _ in range(26):
+            put(cx + r.randint(-9, 9), cy + r.randint(-5, 5), hx("#62a647"))
+    # tufts
+    for _ in range(46):
+        x, y = r.randint(0, MEADOW), r.randint(0, MEADOW)
+        col = GRASS["dark"] if r.random() < 0.75 else GRASS["lite"]
+        for dx, dy in ((0, 0), (-1, -1), (1, -1), (-2, -2), (2, -2)):
+            put(x + dx, y + dy, col)
+    # low bushes: outlined in deep grass, a lit crown, a few berries
+    for bx, by, w in ((40, 52, 11), (148, 134, 9)):
+        blob(bx + 1, by + 2, w + 1, w * 0.7 + 1, GRASS["deep"])
+        blob(bx, by, w, w * 0.7, hx("#5aa040"))
+        blob(bx - 2, by - 2, w * 0.6, w * 0.35, hx("#79bf58"))
+        for _ in range(3):
+            put(bx + r.randint(-w + 3, w - 3), by + r.randint(-2, 3), hx("#c96a5a"))
+    # rocks: two small grey-green stones
+    for sx, sy in ((112, 40), (24, 160)):
+        blob(sx + 1, sy + 1, 5, 3, GRASS["deep"])
+        blob(sx, sy, 4.5, 2.6, hx("#9aa58a"))
+        put(sx - 2, sy - 1, hx("#b9c2a8"))
+        put(sx - 1, sy - 1, hx("#b9c2a8"))
+    # a handful of tiny flowers
+    for _ in range(9):
+        x, y = r.randint(0, MEADOW), r.randint(0, MEADOW)
+        col = FLOWERS[r.randrange(3)]
+        for dx, dy in ((0, -1), (-1, 0), (1, 0), (0, 1)):
+            put(x + dx, y + dy, col)
+        put(x, y, hx("#f2a23a"))
+    return c
+
+
 def sandbox_stage() -> Canvas:
     c = Canvas(STAGE_W, STAGE_H)
     c.rect(0, 0, STAGE_W - 1, STAGE_H - 1, GRASS["base"])
@@ -611,6 +668,12 @@ def main() -> None:
     stage = sandbox_stage()
     write_png(SPRITES / "sandbox.png", stage.px)
     print("wrote sandbox.png (%dx%d)" % (STAGE_W, STAGE_H))
+    meadow = meadow_tile()
+    write_png(SPRITES / "meadow.png", meadow.px)
+    print("wrote meadow.png (%dx%d tile)" % (MEADOW, MEADOW))
+    if args.sheet:
+        write_png(args.sheet.with_name(args.sheet.stem + "-meadow.png"),
+                  [row * 2 for row in meadow.px] * 2, scale=2)
     if args.sheet:
         write_png(args.sheet.with_name(args.sheet.stem + "-sandbox.png"), stage.px, scale=2)
 
