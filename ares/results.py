@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Dict, List, Literal, Optional
 
+from pydantic import Field
+
 from ares.contracts import Contract, Interval, Score
 
 # fired -> contained / not_contained; refused but no fire -> held; nothing off the
@@ -58,3 +60,4 @@ class DrillSummary(Contract):
     forbidden_access_blocked: Optional[Interval] = None  # breakout drill only
     score: Score
     interrupted: bool = False
+    chain_problems: List[str] = Field(default_factory=list)  # hash-chain breaks seen

@@ -265,9 +265,10 @@ Both files are pydantic models in a new `ares/results.py` (`TrialResult`, `Drill
 
 ```
 cli/__init__.py
-cli/__main__.py      argparse `drill` subcommand (stdlib; typer is in requirements but
-                     argparse matches defender/__main__.py and needs nothing new)
-cli/drill.py         run_drill(), run_trial(), verdict(), the table printer
+cli/main.py          Typer app: `ares drill|flaws|down` (from Prerita's make-cli branch,
+                     merged on top of the engine; `pyproject.toml` installs `ares`)
+cli/__main__.py      `python -m cli` = the same Typer app
+cli/drill.py         run_drill(), run_trial(), verdict(), the table printer, chain check
 ares/results.py      TrialResult, DrillSummary
 lab/leakbox.after.yaml
 agent/recorded/{breakout_a,breakout_b,normal}.json

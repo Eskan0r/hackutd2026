@@ -1,0 +1,17 @@
+# Only here to install the `ares` command. Dependencies live in requirements.txt.
+[project]
+name = "ares"
+version = "0.1.0"
+requires-python = ">=3.9"
+
+[project.scripts]
+ares = "cli.main:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Everything cli/drill.py imports or spawns: lab.leakbox.config, scoring.score,
+# ares.*, and `python -m defender` as a subprocess.
+packages = ["ares", "cli", "lab", "lab.leakbox", "scoring", "defender"]

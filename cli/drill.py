@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 from pydantic import ValidationError
 
 from ares.contracts import Event, KillRecord
+from ares.events import verify_chain
 from ares.results import DrillSummary, TrialResult
 from lab.leakbox.config import load_leakbox
 from scoring.score import exercised, interval, score
@@ -94,6 +95,8 @@ class Lab(Protocol):
     ) -> Tuple[Optional[KillRecord], Optional[str]]: ...
 
     def events_for(self, spec: "TrialSpec") -> List[Event]: ...
+
+    def chain_problems(self) -> List[str]: ...  # hash-chain breaks across the event files
 
 
 @dataclass(frozen=True)
@@ -237,6 +240,7 @@ def summarize(
     kills: List[KillRecord],
     flaws: List[str],
     interrupted: bool = False,
+    chain_problems: Optional[List[str]] = None,
 ) -> DrillSummary:
     n = len(results)
     counts = {v: sum(r.verdict == v for r in results) for v in VERDICTS}
@@ -280,6 +284,7 @@ def summarize(
         ),
         score=sc,
         interrupted=interrupted,
+        chain_problems=list(chain_problems or []),
     )
 
 
@@ -342,7 +347,9 @@ def run_drill(
     except KeyboardInterrupt:
         interrupted = True
     spec0 = TrialSpec(drill_id, 0, "%s-00" % drill_id, mode, drill, variant, policy)
-    summary = summarize(spec0, results, events, kills, flaws_on(policy), interrupted)
+    summary = summarize(
+        spec0, results, events, kills, flaws_on(policy), interrupted, lab.chain_problems()
+    )
     _write(runs_dir / drill_id / "summary.json", summary)
     return summary
 
@@ -649,6 +656,13 @@ class ComposeLab:
 
     def events_for(self, spec: TrialSpec) -> List[Event]:
         return read_trial_events(self.runs_dir, spec.run_id, spec.trial)
+
+    def chain_problems(self) -> List[str]:
+        """Every break in the hash chain across the lab's event files."""
+        problems: List[str] = []
+        for path in sorted(self.runs_dir.glob("*.jsonl")):
+            problems += verify_chain(str(path))
+        return problems
 
 
 # --- what the judge sees ----------------------------------------------------

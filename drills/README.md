@@ -17,14 +17,15 @@ a refused attempt but no fire → held; nothing off the allowlist tried → **no
 ## Running a drill
 
 One command runs n trials on fresh containers with fresh run ids, kills through the real
-defender, and prints each trial's verdict with Clopper–Pearson intervals at the end
+defender, and prints each trial's verdict with Clopper–Pearson intervals at the end.
+`ares` is installed by `pip install -e .`; `python -m cli` is the same command
 (design: `docs/superpowers/specs/2026-11-07-variant-b-drill-loop-design.md`):
 
 ```bash
 export ARES_ADMIN_TOKEN=$(openssl rand -hex 16)   # same value the lab runs with
-./.venv/bin/python -m cli drill --mode scripted --drill breakout --variant A --policy before --n 20
-./.venv/bin/python -m cli drill --mode scripted --drill breakout --variant B --policy after --n 20
-./.venv/bin/python -m cli drill --mode scripted --drill normal --policy after --n 1
+ares drill --mode scripted --drill breakout --variant A --policy before --n 20
+ares drill --mode scripted --drill breakout --variant B --policy after --n 20
+ares drill --mode scripted --drill normal --policy after --n 1
 ```
 
 Row colours: **red** = reached the answer key (killed, or NOT CONTAINED in bold); **green** =

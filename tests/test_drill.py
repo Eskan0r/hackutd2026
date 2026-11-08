@@ -202,47 +202,8 @@ def test_a_fire_the_defender_never_answered_is_not_contained_not_held():
 
 # --- the Lab seam and one trial (spec D5) -----------------------------------
 
+from conftest import StubLab  # noqa: E402
 from cli.drill import POLICY_FILES, read_trial_events, run_trial, trial_env  # noqa: E402
-
-
-class StubLab:
-    """Writes the events a trial would leave behind and hands back a prebuilt kill record."""
-
-    def __init__(self, events_dir, events, kill=None, rc=0):
-        self.events_dir, self.events, self.kill, self.rc = events_dir, events, kill, rc
-        self.calls = []
-
-    def prepare(self):
-        self.calls.append("prepare")
-
-    def register_run(self, spec, dummy_key):
-        self.calls.append(("register", spec.run_id, dummy_key))
-        self._run_id, self._trial = spec.run_id, spec.trial  # stamp this trial's events
-
-    def up(self, spec, env):
-        self.calls.append(("up", env))
-
-    def start_watch(self, spec):
-        self.calls.append("watch")
-
-    def exec_harness(self, argv, timeout_s):
-        self.calls.append(("exec", argv))
-        with open(self.events_dir / "proxy.jsonl", "a") as fh:
-            for e in self.events:
-                stamped = e.model_copy(
-                    update={"run_id": self._run_id, "trial": self._trial}
-                )
-                fh.write(stamped.model_dump_json() + "\n")
-        return self.rc
-
-    def finish_watch(self, spec, grace_s):
-        self.calls.append("finish")
-        if self.kill is None:
-            return None, None
-        return self.kill, "lab/runs/kills/%s-%d.json" % (spec.run_id, spec.trial)
-
-    def events_for(self, spec):
-        return read_trial_events(self.events_dir, spec.run_id, spec.trial)
 
 
 def test_trial_env_selects_the_policy_file_by_in_container_path():
@@ -438,14 +399,6 @@ def test_summary_prints_every_rate_with_its_interval(tmp_path):
     assert "containment" in text and "post-kill leaks" in text and "median" in text
 
 
-def test_cli_parses_the_demo_command():
-    from cli.__main__ import parse_args
-
-    ns = parse_args(
-        ["drill", "--mode", "scripted", "--drill", "breakout", "--variant", "B", "--policy", "after", "--n", "20"]
-    )
-    assert (ns.mode, ns.drill, ns.variant, ns.policy, ns.n) == ("scripted", "breakout", "B", "after", 20)
-
 
 def test_hostnames_from_the_agent_cannot_inject_terminal_escapes(tmp_path):
     # dst_host comes from the Host header the agent chose; it must not reach the
@@ -525,13 +478,6 @@ def test_scripted_trial_without_a_recording_fails_before_touching_the_lab(tmp_pa
     assert lab.calls == []
 
 
-def test_cli_rejects_scripted_drills_that_have_no_recording():
-    from cli.__main__ import parse_args, validate
-
-    assert validate(parse_args(["drill", "--drill", "propensity"])) is not None
-    assert validate(parse_args(["drill", "--drill", "propensity", "--mode", "live"])) is None
-    assert validate(parse_args(["drill", "--drill", "breakout", "--variant", "B"])) is None
-
 
 def test_held_is_green_only_when_this_variants_host_was_refused():
     refused_b = _trial(
@@ -553,3 +499,15 @@ def test_summary_shows_the_held_out_rate_for_breakout_drills(tmp_path):
     )
     assert s.forbidden_access_blocked.k == 2 and s.forbidden_access_blocked.n == 2
     assert "forbidden blocked" in format_summary(s, color=False)
+
+
+def test_summary_carries_the_event_chain_check(tmp_path):
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    s = run_drill(StubLab(events_dir, [ev("watch", decision="blocked")]), "scripted", "breakout", "B",
+                  "after", 1, tmp_path / "r", drill_id="d_c")
+    assert s.chain_problems == []
+    (events_dir / "proxy.jsonl").open("a").write('{"ts": "t", "run_id": "d_c-00", "trial": 0, "variant": "B", "source": "x", "kind": "http", "severity": "info", "prev_sha256": "bogus"}\n')
+    s = run_drill(StubLab(events_dir, [ev("watch", decision="blocked")]), "scripted", "breakout", "B",
+                  "after", 1, tmp_path / "r2", drill_id="d_d")
+    assert s.chain_problems and "proxy.jsonl" in s.chain_problems[0]

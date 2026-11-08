@@ -22,7 +22,7 @@ variant C, bait generator, fix templates, `apply-fix`.
 ```bash
 ./.venv/bin/python -m pytest tests/ -q       # 92 tests, ~4s, no network, no key
 ./.venv/bin/python -m pyflakes ares/ gateway/ agent/ cli/ defender/ scoring/ tests/ scripts/
-./.venv/bin/python -m cli drill --help       # n trials against the lab; needs Docker + ARES_ADMIN_TOKEN
+./.venv/bin/python -m pip install -e . && ares drill --help   # the `ares` command (same as python -m cli); needs Docker + ARES_ADMIN_TOKEN
 ./.venv/bin/python scripts/demo_kill.py      # watch the gateway lane + lever 1 run
 ./.venv/bin/python scripts/live_check.py     # needs NVIDIA_API_KEY; ~3 LLM calls
 cd lab && ./selftest.sh                      # Leakbox lane; needs a Docker daemon
