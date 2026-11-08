@@ -8,6 +8,7 @@ import glob
 import json
 import os
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -95,10 +96,15 @@ def _rule(ev: Event) -> str:
     return "%s_%s" % (ev.source, ev.severity)
 
 
-# Block until a trigger event for (run_id, trial) appears, or timeout (None = forever).
-def _wait_for_fire(tail: Tail, run: Run, timeout_s: Optional[float]) -> Optional[Event]:
+# Block until a trigger event for (run_id, trial) appears, or timeout (None = forever),
+# or `stop` is set -- which an embedder (the CLI running a drill in-process) uses to end
+# the wait the moment the agent finishes without firing, instead of blocking for timeout_s.
+def _wait_for_fire(tail: Tail, run: Run, timeout_s: Optional[float],
+                   stop: "Optional[threading.Event]" = None) -> Optional[Event]:
     deadline = None if timeout_s is None else time.monotonic() + timeout_s
     while deadline is None or time.monotonic() < deadline:
+        if stop is not None and stop.is_set():
+            return None
         for ev in tail.new_events():
             if _mine(ev, run) and ev.severity in TRIGGER:
                 return ev  # first wins; dedupes proxy + service double-fire for one request
@@ -116,9 +122,10 @@ def watch_and_kill(
     soft_kill: bool = False,
     timeout_s: Optional[float] = None,
     post_kill_window_s: float = 3.0,
+    stop: "Optional[threading.Event]" = None,
 ) -> Optional[KillRecord]:
     tail = Tail(run.events_dir)
-    fire = _wait_for_fire(tail, run, timeout_s)
+    fire = _wait_for_fire(tail, run, timeout_s, stop)
     if fire is None:
         return None
 
