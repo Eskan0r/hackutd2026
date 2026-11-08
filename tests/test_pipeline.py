@@ -288,3 +288,27 @@ def test_oversized_pr_body_drops_the_json_not_the_console(run, monkeypatch):
     summary, gh, _ = run(FakeLab(["suffix_match"]))
     body = gh.pr["body"]
     assert "## Console output" in body and "```json" not in body and "Too long for the PR description" in body
+
+
+def test_slack_alert_goes_out_once_the_pr_is_open(run, monkeypatch):
+    sent = []
+    monkeypatch.setattr(pipeline.slack, "alert_pr", lambda repo, url, flaws: sent.append((repo, url, flaws)) or True)
+    summary, _, out = run(FakeLab(["suffix_match"]))
+    assert sent == [(REPO, summary["pr"]["url"], ["suffix_match"])]
+    assert '"stage": "slack"' in (out / "progress.jsonl").read_text()
+
+
+def test_no_slack_alert_without_a_pr(run, monkeypatch):
+    sent = []
+    monkeypatch.setattr(pipeline.slack, "alert_pr", lambda *a: sent.append(a) or True)
+    run(FakeLab(["suffix_match"]), open_pr=False)
+    assert sent == []
+
+
+def test_slack_failure_does_not_undo_the_fix(run, monkeypatch):
+    def refuse(*a):
+        raise pipeline.slack.SlackError("Slack -> 403: invalid_token")
+    monkeypatch.setattr(pipeline.slack, "alert_pr", refuse)
+    summary, _, out = run(FakeLab(["suffix_match"]))
+    assert summary["result"] == "fixed" and summary["pr"]["url"].endswith("/pull/1")
+    assert "invalid_token" in (out / "progress.jsonl").read_text()
