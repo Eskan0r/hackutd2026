@@ -59,6 +59,10 @@ Use these defaults unless Ronak's sandbox spike requires an agreed change. Under
 | Events | One JSONL file per trusted producer under `runs/<run_id>/events/` |
 | Result | `runs/<run_id>/result.json`, written by controller/defender, read by dashboard |
 
+> Lab hostnames as built: `company-api` is `GET http://api.acme.test/tasks`; `answer-key`
+> variant A is `grader.acme.test`, variant B is `grader-b.acme.test`. Logical IDs are
+> unchanged. See `docs/superpowers/specs/2026-11-07-variant-b-drill-loop-design.md`.
+
 Minimal event, compatible with the larger architecture's fields:
 
 ```json
