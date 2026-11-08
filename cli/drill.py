@@ -419,6 +419,7 @@ class ComposeLab:
     def defender_argv(self, spec: TrialSpec) -> List[str]:
         return [
             self.python,
+            "-u",  # unbuffered: "watching" must reach the pipe before the harness starts
             "-m",
             "defender",
             "watch",

@@ -309,8 +309,11 @@ def test_compose_lab_builds_the_documented_commands(tmp_path, monkeypatch):
         "--wait",
         "gateway",
     ]
+    # -u: the "watching" line is read through a pipe; block-buffered stdout held
+    # it back and the loop timed out with the defender alive (operator check).
     assert lab.defender_argv(SPEC) == [
         "/venv/python",
+        "-u",
         "-m",
         "defender",
         "watch",
