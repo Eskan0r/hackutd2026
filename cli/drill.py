@@ -20,16 +20,24 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Tuple
+from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 from pydantic import ValidationError
 
 from ares.contracts import Event, KillRecord
-from ares.results import TrialResult
-from scoring.score import exercised
+from ares.results import DrillSummary, TrialResult
+from lab.leakbox.config import load_leakbox
+from scoring.score import exercised, interval, score
 
 REPO = Path(__file__).resolve().parent.parent
 DRILLS_DIR = REPO / "drills"
+LAB_DIR = REPO / "lab"
+# Host-side copies of POLICY_FILES, for reading which flaws a policy leaves on.
+POLICY_FILES_HOST = {
+    "before": LAB_DIR / "leakbox.yaml",
+    "after": LAB_DIR / "leakbox.after.yaml",
+}
+VERDICTS = ("contained", "not_contained", "held", "not_exercised", "failed")
 
 # Logical destination "answer-key" (MVP.md): one host per variant.
 ANSWER_KEY_HOSTS = {"A": "grader.acme.test", "B": "grader-b.acme.test"}
@@ -157,7 +165,9 @@ def read_trial_events(events_dir: Path, run_id: str, trial: int) -> List[Event]:
     return out
 
 
-def run_trial(lab: Lab, spec: TrialSpec, max_wall_seconds: int = 90) -> TrialResult:
+def _run_trial_with_kill(
+    lab: Lab, spec: TrialSpec, max_wall_seconds: int
+) -> Tuple[TrialResult, Optional[KillRecord], List[Event]]:
     """One trial, the way the hand procedure does it (spec D5)."""
     dummy_key = "ares-dummy-" + spec.run_id
     lab.register_run(spec, dummy_key)
@@ -167,7 +177,125 @@ def run_trial(lab: Lab, spec: TrialSpec, max_wall_seconds: int = 90) -> TrialRes
     rc = lab.exec_harness(harness_argv(spec, goal), max_wall_seconds + TRIAL_MARGIN_S)
     kill, kill_path = lab.finish_watch(spec, WATCH_GRACE_S)
     events = lab.events_for(spec)
-    return build_result(spec, events, kill, rc, kill_path)
+    return build_result(spec, events, kill, rc, kill_path), kill, events
+
+
+def run_trial(lab: Lab, spec: TrialSpec, max_wall_seconds: int = 90) -> TrialResult:
+    return _run_trial_with_kill(lab, spec, max_wall_seconds)[0]
+
+
+def new_drill_id(now: Optional[float] = None) -> str:
+    """'d_' + base36 of the epoch milliseconds: short, sortable, unique enough."""
+    n = int((time.time() if now is None else now) * 1000)
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out = ""
+    while n:
+        n, r = divmod(n, 36)
+        out = digits[r] + out
+    return "d_" + (out or "0")
+
+
+def flaws_on(policy: str, lab_dir: Path = LAB_DIR) -> List[str]:
+    """Which flaws the policy leaves on, read from the yaml itself (never hardcoded)."""
+    _, flaws = load_leakbox(str(lab_dir / POLICY_FILES_HOST[policy].name))
+    return sorted(k for k, v in flaws.items() if v)
+
+
+def summarize(
+    spec0: TrialSpec,
+    results: List[TrialResult],
+    events: List[Event],
+    kills: List[KillRecord],
+    flaws: List[str],
+    interrupted: bool = False,
+) -> DrillSummary:
+    n = len(results)
+    counts = {v: sum(r.verdict == v for r in results) for v in VERDICTS}
+    return DrillSummary(
+        drill_id=spec0.drill_id,
+        mode=spec0.mode,
+        drill=spec0.drill,
+        variant=spec0.variant,
+        policy=spec0.policy,
+        n=n,
+        trials=results,
+        verdicts=counts,
+        held=interval(counts["held"], n),
+        allowed_task_passed=(
+            interval(sum(r.allowed_task_passed is True for r in results), n)
+            if spec0.drill == "normal"
+            else None
+        ),
+        score=score(
+            kills,
+            n,
+            events,
+            DECLARED_HOSTS,
+            drill=spec0.drill,
+            target="leakbox",
+            flaws_on=flaws,
+            variant=spec0.variant,
+        ),
+        interrupted=interrupted,
+    )
+
+
+def _write(path: Path, model: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(model.model_dump_json(indent=2), encoding="utf-8")
+
+
+def run_drill(
+    lab: Lab,
+    mode: str,
+    drill: str,
+    variant: str,
+    policy: str,
+    n: int,
+    runs_dir: Path,
+    drill_id: Optional[str] = None,
+    on_result: Optional[Callable[[TrialResult], None]] = None,
+    max_wall_seconds: int = 90,
+) -> DrillSummary:
+    """n trials on fresh containers with fresh run ids, then a scored summary.
+
+    Ctrl-C finishes the current trial's bookkeeping, writes the summary for the
+    trials completed, and marks it interrupted.
+    """
+    drill_id = drill_id or new_drill_id()
+    runs_dir = Path(runs_dir)
+    results: List[TrialResult] = []
+    kills: List[KillRecord] = []
+    events: List[Event] = []
+    interrupted = False
+    lab.prepare()
+    try:
+        for i in range(n):
+            spec = TrialSpec(
+                drill_id=drill_id,
+                trial=i,
+                run_id="%s-%02d" % (drill_id, i),
+                mode=mode,
+                drill=drill,
+                variant=variant,
+                policy=policy,
+            )
+            result, kill, trial_events = _run_trial_with_kill(
+                lab, spec, max_wall_seconds
+            )
+            results.append(result)
+            events += trial_events
+            if kill is not None:
+                kills.append(kill)
+            _write(runs_dir / spec.run_id / "result.json", result)
+            if on_result:
+                on_result(result)
+    except KeyboardInterrupt:
+        interrupted = True
+    spec0 = TrialSpec(drill_id, 0, "%s-00" % drill_id, mode, drill, variant, policy)
+    summary = summarize(spec0, results, events, kills, flaws_on(policy), interrupted)
+    _write(runs_dir / drill_id / "summary.json", summary)
+    return summary
 
 
 def _fired(events: List[Event]) -> bool:
@@ -317,7 +445,9 @@ class ComposeLab:
 
     # -- subprocess glue ----------------------------------------------------
 
-    def _compose(self, *args: str, env: Optional[Dict[str, str]] = None, timeout: float = 300) -> None:
+    def _compose(
+        self, *args: str, env: Optional[Dict[str, str]] = None, timeout: float = 300
+    ) -> None:
         proc = subprocess.run(
             self.compose(*args),
             cwd=str(self.lab_dir),
@@ -328,7 +458,8 @@ class ComposeLab:
         )
         if proc.returncode != 0:
             raise RuntimeError(
-                "docker compose %s failed (%d):\n%s" % (" ".join(args), proc.returncode, proc.stderr[-2000:])
+                "docker compose %s failed (%d):\n%s"
+                % (" ".join(args), proc.returncode, proc.stderr[-2000:])
             )
 
     def prepare(self) -> None:
@@ -343,7 +474,10 @@ class ComposeLab:
             self.admin_url + "/admin/runs",
             data=body,
             method="POST",
-            headers={"X-Ares-Admin-Token": self.token, "Content-Type": "application/json"},
+            headers={
+                "X-Ares-Admin-Token": self.token,
+                "Content-Type": "application/json",
+            },
         )
         try:
             with urllib.request.urlopen(req, timeout=5):  # noqa: S310 - loopback admin port
@@ -351,11 +485,25 @@ class ComposeLab:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")
             if exc.code == 409:
-                detail = "run id already registered with the gateway (reused id?): " + detail
-            raise RuntimeError("gateway refused registration of %s: %d %s" % (spec.run_id, exc.code, detail))
+                detail = (
+                    "run id already registered with the gateway (reused id?): " + detail
+                )
+            raise RuntimeError(
+                "gateway refused registration of %s: %d %s"
+                % (spec.run_id, exc.code, detail)
+            )
 
     def up(self, spec: TrialSpec, env: Dict[str, str]) -> None:
-        self._compose("up", "-d", "--force-recreate", "--wait", "fake", "proxy", "sandbox", env=env)
+        self._compose(
+            "up",
+            "-d",
+            "--force-recreate",
+            "--wait",
+            "fake",
+            "proxy",
+            "sandbox",
+            env=env,
+        )
 
     def start_watch(self, spec: TrialSpec) -> None:
         # stderr goes to a file, not a pipe: the defender reports every non-event
@@ -404,15 +552,23 @@ class ComposeLab:
             return 124
         # Operator-facing only: the harness's own account is never evidence (D5).
         if self._watch_log is not None:
-            (self._watch_log.parent / "harness.out").write_text(proc.stdout + proc.stderr)
+            (self._watch_log.parent / "harness.out").write_text(
+                proc.stdout + proc.stderr
+            )
         return proc.returncode
 
-    def finish_watch(self, spec: TrialSpec, grace_s: float) -> Tuple[Optional[KillRecord], Optional[str]]:
+    def finish_watch(
+        self, spec: TrialSpec, grace_s: float
+    ) -> Tuple[Optional[KillRecord], Optional[str]]:
         assert self._watch is not None
         rel = self.kill_path(spec)
         path = self.repo / rel
         deadline = time.monotonic() + grace_s
-        while time.monotonic() < deadline and not path.exists() and self._watch.poll() is None:
+        while (
+            time.monotonic() < deadline
+            and not path.exists()
+            and self._watch.poll() is None
+        ):
             time.sleep(0.1)
         if path.exists():
             try:

@@ -336,3 +336,55 @@ def test_compose_lab_refuses_to_start_without_the_admin_token(tmp_path, monkeypa
     monkeypatch.delenv("ARES_ADMIN_TOKEN", raising=False)
     with pytest.raises(KeyError):
         ComposeLab(tmp_path)
+
+
+# --- the drill: n trials, a scored summary (spec D1, D7) ----------------------
+
+from ares.results import DrillSummary  # noqa: E402
+from cli.drill import flaws_on, new_drill_id, run_drill  # noqa: E402
+
+
+def test_drill_ids_are_prefixed_and_time_ordered():
+    assert new_drill_id(1_700_000_000.0).startswith("d_")
+    assert new_drill_id(1.0) != new_drill_id(2.0)
+
+
+def test_flaws_on_reads_the_policy_files():
+    assert flaws_on("after") == []
+    assert "suffix_match" in flaws_on("before")
+
+
+def test_run_drill_writes_results_and_a_summary_with_intervals(tmp_path):
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    lab = StubLab(events_dir, [ev("fire")], kill=kill(True))
+    runs = tmp_path / "runs"
+    seen = []
+    summary = run_drill(
+        lab, "scripted", "breakout", "B", "after", 3, runs, drill_id="d_t", on_result=seen.append
+    )
+    assert lab.calls[0] == "prepare" and len(seen) == 3
+    assert [s.run_id for s in summary.trials] == ["d_t-00", "d_t-01", "d_t-02"]
+    assert summary.verdicts == {
+        "contained": 3, "not_contained": 0, "held": 0, "not_exercised": 0, "failed": 0,
+    }
+    assert summary.score.reach.ci95 == (0.292, 1.0) and summary.score.containment.k == 3
+    assert summary.held.n == 3 and summary.allowed_task_passed is None
+    assert (runs / "d_t-01" / "result.json").exists()
+    on_disk = DrillSummary.model_validate_json((runs / "d_t" / "summary.json").read_text())
+    assert on_disk == summary
+
+
+def test_run_drill_reports_held_and_normal_task_rates(tmp_path):
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    held = run_drill(
+        StubLab(events_dir, [ev("watch", decision="blocked")]),
+        "scripted", "breakout", "B", "after", 2, tmp_path / "r1", drill_id="d_h",
+    )
+    assert held.held.k == 2 and held.verdicts["held"] == 2 and held.score.reach.k == 0
+    normal = run_drill(
+        StubLab(events_dir, [ev("info", source="company-api", host="api.acme.test")]),
+        "scripted", "normal", "A", "after", 2, tmp_path / "r2", drill_id="d_n",
+    )
+    assert normal.allowed_task_passed.k == 2 and normal.verdicts["not_exercised"] == 2
