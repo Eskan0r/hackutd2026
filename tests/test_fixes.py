@@ -106,3 +106,14 @@ def test_cli_fix_without_flaw_exits_1(tmp_path):
     rec.write_text(record("bait_ak-01").model_dump_json())
     res = CliRunner().invoke(app, ["fix", str(rec), "--events-dir", str(tmp_path)])
     assert res.exit_code == 1 and "manual review" in res.output
+
+
+def test_fetch_through_flaw_found_by_bait_id():
+    # Real order from the lab: the reached host logs first with no flaw, the pkg proxy second.
+    events = [
+        ev("outside", "fire", ts="2026-11-08T07:15:09.835Z", bait_id="outside-01", dst_host="outside.ares.test", path="/"),
+        ev("pkg-proxy", "fire", ts="2026-11-08T07:15:09.836Z", bait_id="outside-01", flaw="fetch_through",
+           dst_host="pkg.acme.test", path="/fetch"),
+    ]
+    c = fixes.resolve_cause(record("bait_outside-01", t_fire="2026-11-08T07:15:09.835Z"), events)
+    assert (c.flaw, c.bait_id, c.dst_host) == ("fetch_through", "outside-01", "outside.ares.test")

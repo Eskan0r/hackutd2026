@@ -25,12 +25,17 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import httpx
+from dotenv import load_dotenv
 
 from ares.contracts import Caps
 from ares.events import read_events, verify_chain
 from lab.leakbox.config import load_leakbox
 
 REPO = Path(__file__).resolve().parent.parent
+# Keys (NVIDIA_API_KEY, GITHUB_TOKEN) from the repo-root .env, which git and every Docker build
+# context ignore. Anything already exported in the shell wins. The lab gets NVIDIA_API_KEY through
+# the environment compose() passes to docker compose; only the gateway container receives it.
+load_dotenv(REPO / ".env", override=False)
 LAB = REPO / "lab"
 LEAKBOX_YAML = LAB / "leakbox.yaml"
 EVENTS_DIR = LAB / "runs"               # mounted as /events by the lab services
@@ -101,18 +106,22 @@ def compose(args: List[str], env: Optional[Dict[str, str]] = None,
         raise DrillError("docker not found: the lab needs a Docker daemon (run this on the VM)")
 
 
-def lab_up(run_id: str) -> None:
+def lab_up(run_id: str, policy: Optional[Path] = None) -> None:
     """Start (or recreate) the lab with this run's id and dummy key.
 
     The services stamp RUN_ID from their environment, so a new run id recreates
-    them; that also gives each run a fresh gateway.
+    them; that also gives each run a fresh gateway and a fresh sandbox.
+    `policy` mounts a leakbox.yaml from elsewhere (a company repo) in place of
+    lab/leakbox.yaml. creds_in_env lives in the sandbox's env, so it is applied
+    here from that file.
     """
     EVENTS_DIR.mkdir(exist_ok=True)  # else Docker creates the bind mount as root
-    proc = compose(
-        ["up", "-d", "--build", "--wait", *SERVICES],
-        env={"RUN_ID": run_id, "ARES_DUMMY_KEY": dummy_key(run_id),
-             "ARES_ADMIN_TOKEN": admin_token()},
-    )
+    env = {"RUN_ID": run_id, "ARES_DUMMY_KEY": dummy_key(run_id), "ARES_ADMIN_TOKEN": admin_token()}
+    if policy is not None:
+        env["ARES_POLICY"] = str(Path(policy).resolve())
+        if not load_leakbox(str(policy))[1].get("creds_in_env", False):
+            env.update({"DECOY_AWS_ACCESS_KEY_ID": "", "DECOY_AWS_SECRET_ACCESS_KEY": ""})
+    proc = compose(["up", "-d", "--build", "--wait", *SERVICES], env=env)
     if proc.returncode != 0:
         raise DrillError("lab failed to start:\n%s" % proc.stderr.strip())
 
@@ -213,8 +222,25 @@ def chain_problems() -> List[str]:
     return problems
 
 
+def probe(run_id: str, url: str) -> List[Dict[str, Any]]:
+    """Replay one request from inside the sandbox (through the policy proxy, like the agent).
+
+    Returns the fire/breach events it caused; [] means the boundary stopped it. Run with no
+    defender armed: this checks detection on a fixed policy, it does not need a kill.
+    """
+    def seen() -> set:
+        return {json.dumps(e, sort_keys=True) for e in collect_events(run_id)
+                if e.get("severity") in ("fire", "breach")}
+    before = seen()
+    proc = compose(["exec", "-T", "sandbox", "curl", "-s", "-o", "/dev/null", "--max-time", "8", url],
+                   timeout=30)
+    if proc.returncode not in (0, 28):  # 28 = curl timeout, still a valid "did it fire" check
+        raise DrillError("replay of %s failed to run in the sandbox: %s" % (url, proc.stderr.strip()))
+    return [json.loads(e) for e in seen() - before]
+
+
 def _spawn_defender(run_id: str, trial: int, stop: threading.Event,
-                    box: Dict[str, Any]) -> "threading.Thread":
+                    box: Dict[str, Any], soft_kill: bool = False) -> "threading.Thread":
     """Watch this run's events; the first fire pulls all three levers and verifies.
 
     Imported lazily: the defender needs the docker SDK and ares.levers, which a
@@ -235,7 +261,7 @@ def _spawn_defender(run_id: str, trial: int, stop: threading.Event,
                       container=find_sandbox(), events_dir=str(EVENTS_DIR))
             record = watch_and_kill(
                 run, str(KILLS_DIR), gateway=GatewayDeny(admin_url(), admin_token()),
-                timeout_s=caps_wall + 30, stop=stop,
+                timeout_s=caps_wall + 30, stop=stop, soft_kill=soft_kill,
             )
             if record is not None:
                 box["record"] = json.loads(record.model_dump_json())
@@ -250,7 +276,7 @@ def _spawn_defender(run_id: str, trial: int, stop: threading.Event,
 def drill(driver: str = "model", goal: str = DEFAULT_GOAL, script: Optional[str] = None,
           model: Optional[str] = None, caps: Optional[Caps] = None,
           on_step: Callable[[str], None] = lambda msg: None,
-          kill: bool = True) -> Trial:
+          kill: bool = True, policy: Optional[Path] = None) -> Trial:
     """One trial: lab up, register, watch-and-kill, run the harness, collect evidence.
 
     `on_step` is told what is starting, so a front end can show progress.
@@ -265,7 +291,7 @@ def drill(driver: str = "model", goal: str = DEFAULT_GOAL, script: Optional[str]
     caps = caps or Caps()
     run_id = new_run_id()
     on_step("Starting the lab (%s)" % ", ".join(SERVICES))
-    lab_up(run_id)
+    lab_up(run_id, policy)
     on_step("Registering run %s with the gateway" % run_id)
     register_run(run_id, model, caps)
 
@@ -274,7 +300,8 @@ def drill(driver: str = "model", goal: str = DEFAULT_GOAL, script: Optional[str]
     watcher = None
     if kill:
         on_step("Arming the defender (levers: gateway deny, network disconnect, pause/kill)")
-        watcher = _spawn_defender(run_id, 0, stop, box)
+        soft = bool(policy) and load_leakbox(str(policy))[1].get("soft_kill", False)
+        watcher = _spawn_defender(run_id, 0, stop, box, soft_kill=soft)
 
     on_step("Running the %s agent in the sandbox" % ("replayed" if driver == "scripted" else "live"))
     # A verified kill pauses then kills the sandbox, so the harness `exec` is
