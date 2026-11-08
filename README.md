@@ -8,14 +8,13 @@ Design and decisions: **[ARCHITECTURE.md](ARCHITECTURE.md)**. This file is just 
 
 ## Status
 
-Built: the Leakbox target (`lab/`), the LLM gateway (`gateway/`, which is kill lever 1),
-the agent harness (`agent/`), and the shared contracts and hash-chained event log (`ares/`).
+Built: the Leakbox target (`lab/`), the LLM gateway (`gateway/`, kill lever 1), the agent
+harness (`agent/`), the defender with all three levers (`defender/`, `ares/levers.py`), the
+scorer and signer (`scoring/`), the hash-chained event log (`ares/`), and the `ares` CLI
+(`cli/`). `ares drill --target` runs the whole loop in one command (below).
 
-The `ares` CLI (`cli/`) runs one trial: `ares drill`.
-
-Not built yet: the defender with levers 2–3 (`docker_disconnect`, `docker_pause`), the
-scorer, the signer and the dashboard. **So there is no verified three-lever
-kill and no signed report yet** — the `ttk_ms` you see is lever 1 only.
+Not built yet: the DNS sinkhole, drill variants B/C, and the CI gate. The dashboard is on the
+`web-app` branch.
 
 ## Setup
 
@@ -27,6 +26,60 @@ python3.12 -m venv .venv && ./.venv/bin/python -m pip install -r requirements.tx
 Use `./.venv/bin/python` for everything. A bare `python3` on macOS is the system 3.9 and
 has none of the dependencies; the harness will tell you so and exit 2 rather than run a
 drill that reaches nothing and scores as contained.
+
+## Full drill in one command
+
+Tests a company's sandbox policy end to end and opens a fix PR on it:
+
+1. kill-switch selftest (a full kill must hold, a soft kill must be caught)
+2. read `lab/leakbox.yaml` from the target repo
+3. kill check on that policy: a canary fire against a sandbox with a background process
+4. the agent (live Nemotron or a recording) in a fresh lab, the defender armed
+5. on a breakout: name the cause, turn the flaw off, rerun in a **fresh** lab and agent (up to 3 rounds)
+6. replay the original attack and a held-out variant; every one must be blocked
+7. kill check again on the fixed policy
+8. score the trials (95% intervals) and sign the report (ed25519, key in `~/.ares/`)
+9. open one PR: the fixed policy, `ares-reports/<id>.json`, `ares-reports/<id>.signed.json`,
+   with a Containment section in the description
+10. tear the lab down
+
+**One-time setup** (needs Docker Desktop running and Python 3.12+):
+
+```bash
+./setup.sh
+```
+
+It creates the virtualenv, installs everything, creates `.env` from `.env.example`, checks Docker
+and the keys, runs the tests, and prints what is left to do. Safe to re-run. Then fill in `.env`:
+
+- `NVIDIA_API_KEY`: [build.nvidia.com](https://build.nvidia.com), free. One key runs both models:
+  `nvidia/nemotron-3.5-lightning-30b-a3b` is the agent under test (only the lab gateway sees the key),
+  `nvidia/nemotron-3.5-super-vl-120b-a12b` writes the PR title and summary.
+- `GITHUB_TOKEN`: GitHub → Settings → Developer settings → Fine-grained tokens. Only select
+  your target repo; set **Contents** and **Pull requests** to **Read and write**.
+
+Make your own target repo (an empty GitHub repo you own, private is fine), then seed it:
+
+```bash
+./.venv/bin/ares setup-target <you>/<repo>
+```
+
+**Run it** (one terminal; everything starts and stops on its own):
+
+```bash
+./.venv/bin/ares drill fetch_through --target <you>/<repo>   # recorded agent: deterministic, no model calls
+./.venv/bin/ares drill --target <you>/<repo>                 # live Nemotron agent
+```
+
+The PR description includes the containment table, the run's console output (exactly what
+the terminal printed, up to opening the PR), the diff and the summary JSON. Add `--no-pr` to stop
+after verification. A preflight check runs first and says exactly what
+is missing (Docker not running, a key not set, the token unable to reach the repo). Progress is
+written as it happens to `runs/pipelines/<id>/progress.jsonl`, the result to `summary.json`.
+Exit code: 0 held or fixed and verified, 1 not fixed or needs review, 2 error, 3 inconclusive.
+
+Do not merge the PR on the repo you demo with: merging turns the flaw off, so the next run
+finds nothing. Close it instead.
 
 ## Run it
 

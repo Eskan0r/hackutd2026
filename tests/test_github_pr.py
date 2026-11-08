@@ -120,3 +120,24 @@ def test_repo_from_remote(monkeypatch, url):
         stdout = url + "\n"
     monkeypatch.setattr(github_pr.subprocess, "run", lambda *a, **k: P)
     assert github_pr.repo_from_remote(".") == "Eskan0r/hackutd2026"
+
+
+def test_seed_policy_adds_file_once():
+    state = {"exists": False, "put": None}
+
+    def handler(req):
+        path = req.url.path.replace("/repos/%s" % REPO, "")
+        if path == "":
+            return httpx.Response(200, json={"default_branch": "main", "permissions": {"push": True}})
+        if req.method == "GET" and path == "/contents/lab/leakbox.yaml":
+            return httpx.Response(200 if state["exists"] else 404, json={})
+        if req.method == "PUT":
+            state["put"] = json.loads(req.content)
+            return httpx.Response(201, json={})
+        return httpx.Response(500, json={})
+
+    gh = github_pr.GitHub(REPO, "tok", client(handler))
+    assert gh.seed_policy(LEAKBOX) == ("main", True)
+    assert base64.b64decode(state["put"]["content"]).decode() == LEAKBOX and state["put"]["branch"] == "main"
+    state["exists"], state["put"] = True, None
+    assert gh.seed_policy(LEAKBOX) == ("main", False) and state["put"] is None
