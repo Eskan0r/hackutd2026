@@ -75,5 +75,5 @@ cat <<'EOF'
   2. Make an empty GitHub repo you own (private is fine), then:
        ./.venv/bin/ares setup-target <you>/<repo>
   3. Run the whole drill (one terminal, about 2 minutes):
-       ./.venv/bin/ares drill fetch_through --target <you>/<repo>
+       ./.venv/bin/ares trial fetch_through --target <you>/<repo>
 EOF

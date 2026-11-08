@@ -8,7 +8,7 @@ import json
 from typer.testing import CliRunner
 
 from ares.contracts import KillRecord
-from cli import drill as lab
+from cli import lab
 from cli.main import app
 from scoring import fixes
 
