@@ -6,11 +6,16 @@
 
 import argparse
 import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from ares.contracts import Run
 from ares.levers import find_sandbox, lab_identity
 from defender import selftest
 from defender.watch import watch_and_kill
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)  # ARES_ADMIN_TOKEN etc.
 
 
 def main() -> int:

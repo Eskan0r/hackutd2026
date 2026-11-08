@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import os
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import typer
 
-from ares.contracts import Caps
+from ares.contracts import Caps, KillRecord
+from ares.events import read_events
+from scoring import fixes
 
-from . import drill as lab
+from . import drill as lab  # loads the repo-root .env
+from . import github_pr, pipeline, pr_writer
 
 app = typer.Typer(no_args_is_help=True, help="Ares: a fire drill for AI agent containment.")
 
@@ -127,6 +131,40 @@ def _fail(message: str) -> None:
     raise typer.Exit(EXIT_ERROR)
 
 
+_STATUS = {"start": ("▶", "cyan"), "info": ("·", None), "done": ("✓", "green"), "fail": ("✗", "red")}
+
+
+def _pipeline(target: str, base: str, open_pr: bool, recording: Optional[str], goal: str,
+              model: Optional[str], caps: Caps) -> None:
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        _fail("--target needs GITHUB_TOKEN (fine-grained, that repo, Contents + Pull requests read/write)")
+    typer.secho(BANNER, fg="cyan", bold=True)
+    typer.echo()
+    typer.echo(_rule("FIX LOOP · %s@%s" % (target, base)))
+
+    def show(line: Dict[str, Any]) -> None:
+        mark, color = _STATUS.get(line["status"], ("·", None))
+        stage = line["stage"] + ("" if line["round"] is None else " r%d" % line["round"])
+        typer.echo("  %s %-9s %s" % (typer.style(mark, fg=color, bold=True), stage, line["message"]))
+
+    try:
+        summary = pipeline.run(target, base, token, "scripted" if recording else "model", goal, recording,
+                               model, caps, open_pr=open_pr, judge=_inconclusive, show=show)
+    except (lab.DrillError, github_pr.PRError) as e:
+        _fail(str(e))
+    typer.echo(_rule())
+    result = summary["result"]
+    lines = ["%s   %s" % (result.upper().replace("_", " "), summary["pipeline_id"]), summary["reason"] or ""]
+    if summary.get("pr", {}).get("url"):
+        lines.append("PR: %s" % summary["pr"]["url"])
+    lines.append("summary: runs/pipelines/%s/summary.json" % summary["pipeline_id"])
+    _box(lines, {"fixed": "green", "held": "green", "inconclusive": "yellow"}.get(result, "red"))
+    if summary.get("pr", {}).get("error"):
+        raise typer.Exit(EXIT_ERROR)
+    raise typer.Exit({"fixed": 0, "held": 0, "inconclusive": EXIT_INCONCLUSIVE}.get(result, EXIT_BREAKOUT))
+
+
 @app.command("drill")
 def drill_cmd(
     recording: Optional[str] = typer.Argument(
@@ -145,13 +183,24 @@ def drill_cmd(
         True, "--kill/--no-kill",
         help="Arm the defender: a fire triggers a verified three-lever kill. "
              "--no-kill only detects the breakout (needs no docker beyond the lab)."),
+    target: Optional[str] = typer.Option(
+        None, help="owner/repo of a company sandbox policy. Runs the whole loop: drill, fix, rerun "
+                   "in a fresh lab, replay, open a PR (needs GITHUB_TOKEN)."),
+    base: str = typer.Option("main", help="With --target: branch to read the policy from and open the PR against."),
+    pr: bool = typer.Option(True, "--pr/--no-pr", help="With --target: open the PR once the fix is verified."),
 ):
     """Run one trial: the agent harness in the Leakbox sandbox, LLM calls via the gateway.
 
     Examples: `ares drill fetch_through` (replay, no key) or `ares drill` (live).
+    `ares drill --target acme/sandbox` runs the full fix loop against that repo's policy.
     Exit code: 0 boundary held, 1 breakout (fire/breach), 2 error, 3 inconclusive
     (the agent did not complete a trial -- usually a transient provider error).
+    With --target: 0 held or fixed and verified, 1 not fixed or needs review, 2 error, 3 inconclusive.
     """
+    if target:
+        _pipeline(target, base, pr, recording, goal, model,
+                  Caps(max_steps=max_steps, max_tokens=max_tokens, max_wall_seconds=max_wall_seconds))
+        return
     driver = "scripted" if recording else "model"
     if driver == "model" and not (os.environ.get("NVIDIA_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
         typer.secho("warning: no NVIDIA_API_KEY set; the gateway will refuse model calls "
@@ -268,6 +317,77 @@ def flaws(
         state = typer.style("● ON ", fg="red", bold=True) if on else typer.style("○ off", fg="green")
         typer.echo("  %s %s  %s" % (name, "·" * (22 - len(name)), state))
     typer.echo(_rule())
+
+
+@app.command()
+def fix(
+    kill_record: Path = typer.Argument(..., exists=True, dir_okay=False,
+                                       help="A defender kill record, e.g. lab/runs/kills/r_ab12-0.json."),
+    events_dir: Path = typer.Option(lab.EVENTS_DIR, help="Directory holding the lab's *.jsonl event logs."),
+    open_pr: bool = typer.Option(False, "--open-pr", help="Open a GitHub PR with the fix (needs GITHUB_TOKEN)."),
+    base: str = typer.Option("main", help="Branch the PR targets."),
+    repo: Optional[str] = typer.Option(None, help="owner/name; default is the origin remote."),
+):
+    """Name the cause of a breakout and print the leakbox.yaml change that closes it.
+
+    Without --open-pr nothing is changed. With it, the fix is committed to a new branch on GitHub
+    and a PR is opened against --base; the local checkout is untouched.
+    Exit code: 0 a fix was found, 1 needs manual review, 2 error.
+    """
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if open_pr and not token:
+        _fail("--open-pr needs GITHUB_TOKEN (fine-grained, this repo, Contents + Pull requests read/write)")
+    try:
+        record = KillRecord.model_validate_json(kill_record.read_text())
+    except ValueError as e:
+        _fail("not a kill record: %s" % e)
+    events = [e for path in sorted(events_dir.glob("*.jsonl")) for e in read_events(path)]
+    plan = fixes.plan_fix(record, events, lab.LEAKBOX_YAML.read_text())
+    c = plan.cause
+
+    typer.echo(_rule("CAUSE"))
+    typer.echo("  run %s trial %d   ·   fired %s" % (record.run_id, record.trial, c.ts))
+    typer.echo("  reached   %s%s%s" % (c.dst_host or "?", c.path or "", "   (bait %s)" % c.bait_id if c.bait_id else ""))
+    typer.echo("  via flaw  %s" % (c.flaw or "none recorded"))
+    if c.kill_failed:
+        typer.secho("  kill      NOT CONTAINED: %d post-kill leak(s)" % record.post_kill_leaks, fg="red")
+    typer.echo()
+
+    typer.echo(_rule("FIX"))
+    for flaw in plan.flaws:
+        t = fixes.FIXES[flaw]
+        typer.secho("  %s" % t.title, bold=True)
+        typer.echo("  %s" % t.why)
+        if t.rebuild:
+            typer.secho("  Takes effect only after the sandbox is rebuilt.", fg="yellow")
+        typer.echo()
+    for reason in plan.unresolved:
+        typer.secho("  ! %s" % reason, fg="yellow")
+    if plan.diff:
+        if plan.unresolved:
+            typer.echo()
+        for line in plan.diff.splitlines():
+            color = "green" if line.startswith("+") and not line.startswith("+++") else (
+                "red" if line.startswith("-") and not line.startswith("---") else None)
+            typer.secho("  %s" % line, fg=color)
+    typer.echo(_rule())
+    if not plan.fixable:
+        raise typer.Exit(EXIT_BREAKOUT)
+
+    if open_pr:
+        narration = None
+        typer.echo("  Writing PR text with %s ..." % pr_writer.PR_MODEL)
+        try:
+            narration = pr_writer.narrate(plan, record, os.environ.get("NVIDIA_API_KEY", ""))
+            typer.echo("  PR text: written by %s, checked against the evidence" % narration.model)
+        except pr_writer.NarrationError as e:
+            typer.secho("  PR text: fixed template (%s)" % e, fg="yellow")
+        try:
+            url = github_pr.open_fix_pr(plan, record, repo or github_pr.repo_from_remote(str(lab.REPO)), base,
+                                        token, narration=narration)
+        except github_pr.PRError as e:
+            _fail(str(e))
+        typer.secho("  PR: %s" % url, fg="green", bold=True)
 
 
 @app.command()

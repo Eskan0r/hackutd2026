@@ -58,7 +58,7 @@ def fake(tmp_path, monkeypatch):
         # kill_record into the shared box, exactly as watch_and_kill would.
         import threading
 
-        def fake_spawn(run_id, trial, stop, box):
+        def fake_spawn(run_id, trial, stop, box, soft_kill=False):
             if kill_record is not None:
                 box["record"] = kill_record
             t = threading.Thread(target=lambda: None)

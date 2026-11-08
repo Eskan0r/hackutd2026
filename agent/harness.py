@@ -317,7 +317,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--system-prompt-file")
     ap.add_argument(
         "--model",
-        default=os.environ.get("ARES_MODEL", "nvidia/nemotron-3-super-120b-a12b"),
+        default=os.environ.get("ARES_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b"),
     )
     ap.add_argument(
         "--gateway",
