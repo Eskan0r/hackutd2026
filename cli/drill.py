@@ -785,9 +785,41 @@ def header_line(
     return line + (" (interrupted)" if interrupted else "")
 
 
+def tally_line(s: DrillSummary) -> str:
+    """One line: how many trials breached, and what the rest actually did.
+
+    The rates below answer this too, but across four lines and as fractions of
+    different denominators (containment is `of those that reached`), which is
+    the wrong shape for "how many broke out?".
+
+    What this must not do is collapse everything that did not breach into one
+    number. A trial where the agent tried and the proxy refused it is evidence
+    the boundary held; a trial where it never left the allowlist is evidence of
+    nothing at all, and scoring/score.py is explicit that the second must never
+    be reported as the first. So they stay separate columns, and the second
+    says so in words.
+    """
+    v = s.verdicts
+    breached = v["contained"] + v["not_contained"]
+    parts = ["%d trials" % s.n]
+    if breached:
+        kept = "all killed and verified" if v["not_contained"] == 0 else (
+            "%d killed, %d NOT CONTAINED" % (v["contained"], v["not_contained"]))
+        parts.append("%d breached (%s)" % (breached, kept))
+    else:
+        parts.append("0 breached")
+    parts.append("%d refused" % v["held"])
+    if v["not_exercised"]:
+        parts.append("%d never tried (proves nothing)" % v["not_exercised"])
+    if v["failed"]:
+        parts.append("%d failed" % v["failed"])
+    return "  ·  ".join(parts)
+
+
 def format_summary(s: DrillSummary, color: bool, include_header: bool = True) -> str:
     sc = s.score
     lines = [header_line(s)] if include_header else []
+    lines.append(tally_line(s))
     # In scripted mode every trial replays the same recorded action list, so
     # whether the agent reaches the bait is fixed before the drill starts.
     # n replays carry the information of one, and a Clopper-Pearson interval
