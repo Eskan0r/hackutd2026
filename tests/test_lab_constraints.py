@@ -14,6 +14,10 @@ import subprocess
 import sys
 import textwrap
 
+import yaml
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # What the lab image does NOT have.
 BLOCKED = ("pydantic", "pydantic_core", "yaml", "httpx", "fastapi", "openai", "uvicorn")
 
@@ -86,3 +90,9 @@ def test_sandbox_image_does_not_copy_the_ares_package():
     assert not any("ares/" in c for c in copies), (
         "the sandbox image must not contain the ares package: %s" % copies
     )
+
+
+def test_sandbox_runtime_is_an_env_toggle_defaulting_to_runc():
+    with open(os.path.join(ROOT, "lab", "docker-compose.yml")) as f:
+        compose = yaml.safe_load(f)
+    assert compose["services"]["sandbox"]["runtime"] == "${ARES_SANDBOX_RUNTIME:-runc}"
