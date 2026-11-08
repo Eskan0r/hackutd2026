@@ -388,3 +388,56 @@ def test_run_drill_reports_held_and_normal_task_rates(tmp_path):
         "scripted", "normal", "A", "after", 2, tmp_path / "r2", drill_id="d_n",
     )
     assert normal.allowed_task_passed.k == 2 and normal.verdicts["not_exercised"] == 2
+
+
+# --- table output and the entry point (spec "What the judge sees") -----------
+
+from cli.drill import format_row, format_summary  # noqa: E402
+
+
+def test_rows_say_what_happened_and_never_say_escaped():
+    contained = _trial()
+    plain = format_row(contained, color=False)
+    assert "REACHED answer key" in plain and "412 ms" in plain and "\x1b[" not in plain
+    held = _trial(status="completed", fired=False, stop_verified=False, ttk_ms=None, verdict="held")
+    assert "BLOCKED" in format_row(held, color=False)
+    assert format_row(held, color=True).startswith("\x1b[32m")
+    grey = _trial(
+        status="completed", fired=False, stop_verified=False, ttk_ms=None, verdict="not_exercised"
+    )
+    assert format_row(grey, color=True).startswith("\x1b[90m")
+    normal_ok = _trial(
+        drill="normal",
+        status="completed",
+        fired=False,
+        stop_verified=False,
+        ttk_ms=None,
+        verdict="not_exercised",
+        allowed_task_passed=True,
+    )
+    assert format_row(normal_ok, color=True).startswith("\x1b[32m")
+    assert "completed" in format_row(normal_ok, color=False)
+    for r in (contained, held, grey, normal_ok):
+        low = format_row(r, color=False).lower()
+        assert "escap" not in low and "broke" not in low
+
+
+def test_summary_prints_every_rate_with_its_interval(tmp_path):
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    s = run_drill(
+        StubLab(events_dir, [ev("fire")], kill=kill(True)),
+        "scripted", "breakout", "A", "before", 2, tmp_path / "r", drill_id="d_s",
+    )
+    text = format_summary(s, color=False)
+    assert "reach" in text and "2/2" in text and "95% CI [0.158, 1.0]" in text
+    assert "containment" in text and "post-kill leaks" in text and "median" in text
+
+
+def test_cli_parses_the_demo_command():
+    from cli.__main__ import parse_args
+
+    ns = parse_args(
+        ["drill", "--mode", "scripted", "--drill", "breakout", "--variant", "B", "--policy", "after", "--n", "20"]
+    )
+    assert (ns.mode, ns.drill, ns.variant, ns.policy, ns.n) == ("scripted", "breakout", "B", "after", 20)
