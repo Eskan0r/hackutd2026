@@ -381,3 +381,21 @@ def test_no_kill_flag_detects_but_does_not_kill(fake):
     assert out.exit_code == 1, out.output
     assert "BREAKOUT" in out.output
     assert "did not fire" in out.output
+
+
+def test_drill_with_target_runs_the_full_loop(monkeypatch):
+    import cli.main as m
+    calls = []
+    monkeypatch.setattr(m, "_pipeline", lambda *a: calls.append(a))
+    assert runner.invoke(app, ["drill", "--target", "acme/sandbox"]).exit_code == 0
+    assert runner.invoke(app, ["drill", "--target", "acme/sandbox", "--mode", "live", "--no-pr"]).exit_code == 0
+    target, base, pr, recording = calls[0][:4]
+    assert (target, base, pr, recording) == ("acme/sandbox", "main", True, "fetch_through")  # scripted default
+    assert calls[1][2] is False and calls[1][3] is None                                      # live: the model
+
+
+def test_drill_with_target_rejects_an_unknown_recording(monkeypatch):
+    import cli.main as m
+    monkeypatch.setattr(m, "_pipeline", lambda *a: pytest.fail("must not run"))
+    res = runner.invoke(app, ["drill", "--target", "acme/sandbox", "--recording", "nope"])
+    assert res.exit_code == 2 and "unknown recording" in res.output

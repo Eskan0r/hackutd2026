@@ -106,6 +106,19 @@ class GitHub:
         f = self.call("GET", "/contents/%s" % path, params={"ref": base}).json()
         return base64.b64decode(f["content"]).decode("utf-8"), f["sha"]
 
+    def seed_policy(self, text: str) -> Tuple[str, bool]:
+        """Put `text` at lab/leakbox.yaml on the default branch unless something is already there.
+        Returns (branch, created)."""
+        branch = self.call("GET", "").json()["default_branch"]
+        r = self.gh.request("GET", "/repos/%s/contents/%s" % (self.repo, fixes.LEAKBOX_PATH), params={"ref": branch})
+        if r.status_code == 200:
+            return branch, False
+        if r.status_code != 404:
+            raise PRError("GitHub GET %s -> %d: %s" % (fixes.LEAKBOX_PATH, r.status_code, r.text[:300]))
+        self.call("PUT", "/contents/%s" % fixes.LEAKBOX_PATH, json={
+            "message": "Add the sandbox policy Ares tests (Leakbox flaws on)", "branch": branch, "content": _b64(text)})
+        return branch, True
+
     def open_policy_pr(self, base: str, branch: str, flaws: List[str],
                        text: Callable[[str], Tuple[str, str]],
                        extra_files: Optional[Dict[str, str]] = None) -> str:
