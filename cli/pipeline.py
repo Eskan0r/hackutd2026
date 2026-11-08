@@ -46,6 +46,7 @@ from scoring.score import score as score_trials
 
 from . import lab
 from . import pr_writer
+from . import slack
 from .github_pr import GitHub, PRError
 
 PIPELINES_DIR = lab.REPO / "runs" / "pipelines"
@@ -367,6 +368,7 @@ def run(target: str, base: str, token: str, driver: str = "model", goal: str = l
     if summary["result"] == FIXED and open_pr:
         try:
             _open_pr(summary, signed, gh, base, progress, nim_client)
+            _slack_alert(summary, progress)
         except PRError as exc:  # the fix is still verified; only the PR failed
             summary["pr"] = {"error": str(exc)}
             progress("pr", "fail", str(exc))
@@ -374,6 +376,15 @@ def run(target: str, base: str, token: str, driver: str = "model", goal: str = l
     progress("result", "done", "%s: %s" % (summary["result"], summary["reason"]),
              result=summary["result"], pr=summary.get("pr"))
     return summary
+
+
+def _slack_alert(summary: Dict[str, Any], progress: Progress) -> None:
+    flaws = [c["setting"].split(".", 1)[1] for c in summary["changes"]]
+    try:
+        if slack.alert_pr(summary["target"]["repo"], summary["pr"]["url"], flaws):
+            progress("slack", "done", "Slack alert sent")
+    except slack.SlackError as exc:  # the PR is open; only the alert failed
+        progress("slack", "fail", str(exc))
 
 
 def _write_text(path: Path, text: str) -> str:

@@ -29,7 +29,7 @@ from ares.contracts import Caps, Event, KillRecord
 from ares.events import read_events
 from ares.results import DrillSummary
 from cli import lab  # loads the repo-root .env
-from cli import github_pr, pipeline, pr_writer
+from cli import github_pr, pipeline, pr_writer, slack
 from cli.drill import (
     COLUMNS,
     LAB_DIR,
@@ -808,11 +808,12 @@ def fix(
             )
         except pr_writer.NarrationError as e:
             typer.secho("  PR text: fixed template (%s)" % e, fg="yellow")
+        target_repo = repo or github_pr.repo_from_remote(str(lab.REPO))
         try:
             url = github_pr.open_fix_pr(
                 plan,
                 record,
-                repo or github_pr.repo_from_remote(str(lab.REPO)),
+                target_repo,
                 base,
                 token,
                 narration=narration,
@@ -820,6 +821,11 @@ def fix(
         except github_pr.PRError as e:
             _fail(str(e))
         typer.secho("  PR: %s" % url, fg="green", bold=True)
+        try:
+            if slack.alert_pr(target_repo, url, plan.flaws):
+                typer.secho("  Slack alert sent", fg="green")
+        except slack.SlackError as e:  # the PR is open; only the alert failed
+            typer.secho("  Slack alert failed: %s" % e, fg="yellow")
 
 
 @app.command("setup-target")

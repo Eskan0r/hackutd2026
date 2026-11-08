@@ -16,7 +16,8 @@ build order; read it before any design work. When an implementation decision con
 `scoring/fixes.py` names a breakout's cause), and `cli/`: `ares drill` (`cli/drill.py`: n trials,
 verdicts, intervals; `ares/results.py` holds its contracts), `ares trial` (`cli/lab.py`: one trial
 with the kill wired in), `ares fix` (`cli/pipeline.py`, `cli/github_pr.py`, `cli/pr_writer.py`:
-name the flaw, rerun on the fixed policy, open a GitHub PR). Not yet built: DNS sinkhole, `web/`,
+name the flaw, rerun on the fixed policy, open a GitHub PR; `cli/slack.py` posts a Slack alert when
+`SLACK_WEBHOOK_URL` is set). Not yet built: DNS sinkhole, `web/`,
 variant C, bait generator.
 
 ## Commands
