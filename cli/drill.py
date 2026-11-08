@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import json
 import os
-import select
+import queue
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -435,6 +436,20 @@ def build_result(
 # --- the real lab -----------------------------------------------------------
 
 
+def _pump_lines(stream: Any, out: "queue.Queue[str]") -> None:
+    """Copy `stream`'s lines into `out` until EOF, then put "" (the EOF mark).
+
+    Runs on a daemon thread. A stream closed under it (the defender being
+    stopped) ends the copy like an EOF would.
+    """
+    try:
+        for line in iter(stream.readline, ""):
+            out.put(line)
+    except (OSError, ValueError):
+        pass
+    out.put("")
+
+
 class ComposeLab:
     """Drives the compose lab and the defender exactly as the documented hand
     procedure does (drills/README.md, DEFENDER.md): recreate fake/proxy/sandbox per
@@ -579,15 +594,24 @@ class ComposeLab:
         log.close()
         deadline = time.monotonic() + self.WATCH_READY_S
         assert self._watch.stdout is not None
+        # A reader thread rather than select(): select() only takes sockets on
+        # Windows (WinError 10038 on a pipe). The thread also keeps draining
+        # the pipe after "watching", so a chatty defender can never block on a
+        # full one mid-kill.
+        lines: "queue.Queue[str]" = queue.Queue()
+        threading.Thread(
+            target=_pump_lines, args=(self._watch.stdout, lines), daemon=True
+        ).start()
         while time.monotonic() < deadline:
-            ready, _, _ = select.select([self._watch.stdout], [], [], 0.2)
-            if ready:
-                line = self._watch.stdout.readline()
-                if line.startswith("watching"):
-                    return
-                if line == "":  # EOF: the defender exited before it was watching
+            try:
+                line = lines.get(timeout=0.2)
+            except queue.Empty:
+                if self._watch.poll() is not None and lines.empty():
                     break
-            elif self._watch.poll() is not None:
+                continue
+            if line.startswith("watching"):
+                return
+            if line == "":  # EOF: the defender exited before it was watching
                 break
         rc = self._watch.poll()
         self._stop_watch()

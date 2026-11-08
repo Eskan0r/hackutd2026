@@ -22,6 +22,21 @@ Not built yet: the DNS sinkhole and the CI gate.
 
 ## Setup
 
+With Node 18+ installed, on Windows, macOS or Linux:
+
+```bash
+npm run setup       # venv, dependencies, the `ares` command, .env, Docker check (safe to re-run)
+npm run dev         # the dashboard + `ares drill --target $ARES_TARGET --mode live`, one command
+npm run dev -- --target owner/repo --mode scripted   # anything after -- goes to `ares drill`
+npm run dashboard   # just the read-only dashboard, on 127.0.0.1:8090
+```
+
+`package.json` is a task runner only: no dependencies, nothing to `npm install`. `npm run dev`
+opens the dashboard before the drill starts, so it follows every run as it lands; its request
+log goes to `.ares-dev/web.log`. When the drill ends the dashboard stays up until Ctrl+C.
+
+Or by hand:
+
 ```bash
 python3.12 -m venv .venv && ./.venv/bin/python -m pip install -r requirements.txt
 ./.venv/bin/python -m pip install -e .    # installs the `ares` command

@@ -26,6 +26,9 @@ is 3–5 ms (deny + verify).
 ## Commands
 
 ```bash
+npm run setup                                # venv + deps + `ares` + .env + Docker check, any OS
+npm run dev                                  # dashboard, then ares drill --target $ARES_TARGET --mode live
+npm run dashboard                            # just the viewer
 ./.venv/bin/python -m pytest tests/ -q       # hermetic: no network, no key
 ./.venv/bin/python -m pyflakes ares/ gateway/ agent/ defender/ scoring/ cli/ web/ tests/ scripts/
 ./.venv/bin/python -m pip install -e . && ares drill --help   # the `ares` command (same as python -m cli); needs Docker + ARES_ADMIN_TOKEN
@@ -137,7 +140,9 @@ These are the point of the project. Code that violates one is wrong even if it p
 - **`web/` is React with no build step.** React 18 UMD and htm are vendored under
   `web/static/vendor/` and `app.js` is an ES module the browser runs as written -- no npm, no
   bundler, no CDN. `index.html` loads the UMD globals first, then the module. Keep it that way:
-  the dashboard has to come up on a conference network or none at all.
+  the dashboard has to come up on a conference network or none at all. The root `package.json`
+  does not change that: it is a dependency-free task runner (`scripts/setup.mjs`, `dev.mjs`)
+  whose only job is finding the venv on any OS.
 - **The canvas draws no text.** 6-9px glyphs stretched by a pixelated upscale are unreadable.
   Scene art is pure shapes; every label is HTML positioned over the canvas in percentages, which
   is why `.stage` carries the canvas's exact `aspect-ratio`.
