@@ -30,7 +30,8 @@ scripts/vm_bootstrap.sh
 
 The script is safe to re-run. It installs gVisor (`runsc`) and registers it with Docker,
 makes a Python 3.12 venv with the `ares` command in it, and creates `.env` at the repo root
-(gitignored, mode 600) with a generated `ARES_ADMIN_TOKEN`. Then add the one real key:
+(gitignored, mode 600) with a generated `ARES_ADMIN_TOKEN`, and opens `lab/runs` (mode 777) so
+the gateway container, which writes events as uid 10001, can register runs. Then add the one real key:
 
 ```bash
 nano .env            # NVIDIA_API_KEY=nvapi-...   and GITHUB_TOKEN=github_pat_... for the fix PR

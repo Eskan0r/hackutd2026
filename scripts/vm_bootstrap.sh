@@ -82,13 +82,22 @@ if [ ! -f .env ]; then
   sed -i "s/^ARES_ADMIN_TOKEN=.*/ARES_ADMIN_TOKEN=$(openssl rand -hex 16)/" .env
 fi
 
-# 6. Summary.
+# 6. The shared evidence dir. Docker or a selftest creates it root/755, but the gateway
+#    container writes to it as uid 10001 (never root: it holds the real key) and the host
+#    CLI and defender write as $USER. Docker Desktop's file sharing hides this; on Linux
+#    it is a 500 at run registration. Events are hash-chained, so a wide mode costs no
+#    evidence integrity on this single-user VM.
+sudo mkdir -p lab/runs/kills
+sudo chmod 777 lab/runs lab/runs/kills
+
+# 7. Summary.
 echo "== done"
 echo "   ubuntu:  $RELEASE"
 echo "   docker:  $(docker --version)"
 echo "   runsc:   $(command -v runsc >/dev/null && echo yes || echo no)"
 echo "   venv:    $(./.venv/bin/python --version)"
 echo "   ares:    $(./.venv/bin/ares --help >/dev/null 2>&1 && echo ./.venv/bin/ares || echo MISSING)"
+echo "   runs:    $(stat -c '%a %U' lab/runs) lab/runs  (needs 777: gateway writes as uid 10001)"
 if grep -q '^NVIDIA_API_KEY=$' .env; then
   echo "   next:    put NVIDIA_API_KEY in .env"
 fi
