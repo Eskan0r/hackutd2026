@@ -92,6 +92,21 @@ def _print_kill(rec: Dict[str, Any]) -> None:
     typer.echo()
 
 
+def dashboard_url(run_id: str) -> str:
+    """Where to watch this run in the dashboard.
+
+    `?run=<run_id>` is enough: web.model.resolve_run accepts a bare run id, so
+    the CLI does not have to know how the dashboard keys its runs (that is
+    `<dir slug>:<run_id>`, and duplicating the rule here would be one more
+    thing to keep in step). ARES_WEB_URL overrides the host for a drill running
+    on the VM while you watch from a laptop.
+    """
+    base = os.environ.get("ARES_WEB_URL") or (
+        "http://127.0.0.1:%s" % os.environ.get("ARES_WEB_PORT", "8090")
+    )
+    return "%s/?run=%s" % (base.rstrip("/"), run_id)
+
+
 def _fail(message: str) -> None:
     typer.secho("error: %s" % message, fg="red", err=True)
     raise typer.Exit(EXIT_ERROR)
@@ -143,9 +158,17 @@ def drill_cmd(
     typer.echo(_rule())
     typer.echo()
 
+    def announce(run_id: str) -> None:
+        # Printed before the lab comes up, so there is time to open it and
+        # watch the sandbox play this run out as the events land.
+        typer.echo("  %s %s" % (typer.style("watch:", fg="cyan", bold=True),
+                                dashboard_url(run_id)))
+        typer.echo()
+
     steps = iter(range(1, 6))
     try:
         trial = lab.drill(driver, goal, recording, model, caps, kill=kill,
+                          on_run_id=announce,
                           on_step=lambda msg: typer.echo(
             "  %s %s" % (typer.style("[%d/4]" % next(steps), fg="cyan", bold=True), msg)))
     except lab.DrillError as e:
@@ -180,6 +203,9 @@ def drill_cmd(
     if outcome.kill_record is not None:
         _print_kill(outcome.kill_record)
     _box(outcome.lines, outcome.color)
+    typer.echo()
+    typer.secho("  replay it: %s" % dashboard_url(trial.run_id), fg="cyan")
+    typer.echo()
     if outcome.exit_code:
         raise typer.Exit(outcome.exit_code)
 

@@ -123,6 +123,21 @@ export function drillCommand(req) {
   return parts.join(" ");
 }
 
+/**
+ * The first line that has not finished typing, or -1 when the console has
+ * caught up. `typed` is a Set/WeakSet of line objects.
+ *
+ * Deliberately by object identity rather than by a count or an index. The
+ * console shows two lists glued together -- the session (grows) and the
+ * replay, which is rebuilt from the playback cursor, so it shrinks when you
+ * step back and is replaced when another run loads. Any index into the join
+ * goes stale the moment either side moves, which is what made a second drill
+ * re-type an old evidence line and then dump the rest untyped.
+ */
+export function pendingIndex(lines, typed) {
+  return lines.findIndex((entry) => !typed.has(entry));
+}
+
 /* ---------------------------------------------------------------- rendering */
 
 function Line({ entry, text }) {
@@ -159,7 +174,21 @@ function useThumb(bodyRef) {
  */
 export function Terminal({ open, replay, session, onCommand, busy, caps }) {
   const lines = session.concat(replay);
-  const [done, setDone] = useState(0);
+  // Which lines have finished typing, tracked by the line object itself rather
+  // than by an index into `lines`.
+  //
+  // An index does not survive this console. `lines` is two lists glued
+  // together: `session` grows when you type or a job speaks, and `replay` is
+  // rebuilt from the playback cursor -- it shrinks when you step back and is
+  // replaced wholesale when a different run loads. An index into the join
+  // therefore stops pointing at the line it pointed at a moment ago, which is
+  // exactly what went wrong on a second drill: typing the command pushed the
+  // index onto an old evidence line and re-typed it, then the new run's
+  // shorter replay tripped the clamp and dumped the rest untyped. Line objects
+  // are stable (fold concatenates the same entries), so a WeakSet of them is
+  // immune to the lists moving underneath it.
+  const typed = useRef(new WeakSet());
+  const [, bump] = useState(0);          // re-render when a line finishes
   const [chars, setChars] = useState(0);
   const [input, setInput] = useState("");
   const [histAt, setHistAt] = useState(-1);
@@ -169,37 +198,43 @@ export function Terminal({ open, replay, session, onCommand, busy, caps }) {
 
   const history = session.filter((e) => e.tag === "cmd").map((e) => e.text);
 
-  // Stepping back shortens the log, so the typewriter's place in it can end up
-  // past the end. Clamp rather than letting it index off the array.
-  useEffect(() => {
-    if (done > lines.length) { setDone(lines.length); setChars(0); }
-  }, [lines.length, done]);
+  // The first line not yet typed, wherever it now sits.
+  const pending = pendingIndex(lines, typed.current);
+  const typing = pending < 0 ? null : lines[pending];
+  const caught = !typing;
 
-  // type the next pending line; a long backlog types faster so the console
-  // never falls far behind the scene
+  // type the pending line; a long backlog types faster so the console never
+  // falls far behind the scene
   useEffect(() => {
-    if (done >= lines.length) return undefined;
-    const text = lines[done].text || "";
-    const backlog = lines.length - done;
-    const id = chars < text.length
-      ? setTimeout(() => setChars((c) => c + (backlog > 6 ? 8 : 2)), CHAR_MS)
-      : setTimeout(() => { setDone((d) => d + 1); setChars(0); }, backlog > 6 ? 10 : LINE_PAUSE_MS);
+    if (!typing) return undefined;
+    const text = typing.text || "";
+    const backlog = lines.length - pending;
+    if (chars < text.length) {
+      const id = setTimeout(() => setChars((c) => c + (backlog > 6 ? 8 : 2)), CHAR_MS);
+      return () => clearTimeout(id);
+    }
+    const id = setTimeout(() => {
+      typed.current.add(typing);
+      setChars(0);
+      bump((n) => n + 1);
+    }, backlog > 6 ? 10 : LINE_PAUSE_MS);
     return () => clearTimeout(id);
-  }, [lines, done, chars]);
+  }, [typing, chars, lines.length, pending]);
 
   // follow the output, and keep the drawn scrollbar in step
   useEffect(() => {
     const el = bodyRef.current;
     if (el) el.scrollTop = el.scrollHeight;
     measure();
-  }, [done, chars, open, measure]);
+  }, [typing, chars, open, measure]);
 
   useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
+    if (open && !busy) inputRef.current?.focus();
+  }, [open, busy]);
 
   const submit = (e) => {
     e.preventDefault();
+    if (busy) return;                    // nothing to accept while a drill runs
     const text = input.trim();
     setInput("");
     setHistAt(-1);
@@ -218,9 +253,7 @@ export function Terminal({ open, replay, session, onCommand, busy, caps }) {
     }
   };
 
-  const shown = lines.slice(0, done);
-  const typing = done < lines.length ? lines[done] : null;
-  const caught = !typing;
+  const shown = pending < 0 ? lines : lines.slice(0, pending);
   return html`
     <aside class=${`console ${open ? "console-open" : ""}`} aria-label="Drill console"
            aria-hidden=${!open}>
@@ -236,12 +269,20 @@ export function Terminal({ open, replay, session, onCommand, busy, caps }) {
                aria-live="polite">
             ${shown.map((e, i) => html`<${Line} key=${i} entry=${e} text=${e.text} />`)}
             ${typing && html`<${Line} entry=${typing} text=${(typing.text || "").slice(0, chars)} />`}
-            ${caught && html`
+            ${/* While a drill runs the prompt is not a prompt: there is nothing
+                  it could accept, so it shows what is running instead of an
+                  input you can type into and have ignored. */ ""}
+            ${caught && busy && html`
+              <div class="ln ln-busy" role="status">
+                <span class="prompt">${PROMPT}</span>
+                <span class="busy-text">drill running</span>
+                <span class="cursor" aria-hidden="true"></span>
+              </div>`}
+            ${caught && !busy && html`
               <form class="ln ln-input" onSubmit=${submit}>
                 <span class="prompt">${PROMPT}</span>
                 <input ref=${inputRef} class="console-input" value=${input} spellcheck="false"
                   autocomplete="off" aria-label="Type a command"
-                  placeholder=${busy ? "a drill is running..." : ""}
                   onKeyDown=${onKeyDown}
                   onInput=${(e) => setInput(e.target.value)} />
               </form>`}

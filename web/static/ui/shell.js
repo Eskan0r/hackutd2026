@@ -104,6 +104,7 @@ export function useShell({ onLoad }) {
     const source = new EventSource(`/api/drill/${encodeURIComponent(jobId)}/stream`);
     sourceRef.current = source;
     let attached = null;
+    let finished = false;
     source.onmessage = (ev) => {
       let payload;
       try { payload = JSON.parse(ev.data); } catch { return; }
@@ -113,6 +114,7 @@ export function useShell({ onLoad }) {
         onLoad({ kind: "run", key: attached, live: true });
       }
       if (payload.state && payload.state !== "running") {
+        finished = true;
         setBusy(false);
         source.close();
         // Settle the sandbox: the run is finished, so stop tailing it and let
@@ -124,6 +126,10 @@ export function useShell({ onLoad }) {
     };
     source.onerror = () => {
       source.close();
+      // The server closes the stream once the job ends, and a browser reports
+      // that close as an error. Only a drop *before* the job finished is worth
+      // telling anyone about.
+      if (finished) return;
       setBusy(false);
       say([line("warn", "lost the job stream; run `runs` to find the run on disk")]);
     };
@@ -144,6 +150,7 @@ export function useShell({ onLoad }) {
       return;
     }
     setBusy(true);
+    clearInterval(watchRef.current);   // not waiting on a shell any more
     try {
       const res = await fetch("/api/drill", {
         method: "POST",
@@ -204,7 +211,10 @@ export function useShell({ onLoad }) {
     const argv = tokenize(text);
     const [head, ...rest] = argv;
 
-    if (head === "help" || head === "?") { say(HELP); return; }
+    // Copied, not shared: HELP is a module constant, and the console tracks
+    // which lines it has typed by object identity -- handing it the same
+    // objects twice would make a second `help` appear instantly.
+    if (head === "help" || head === "?") { say(HELP.map((e) => ({ ...e }))); return; }
     if (head === "clear") { setSession([]); return; }
     if (head === "runs") { await listRuns(); return; }
     if (head === "demo") {
@@ -240,5 +250,7 @@ export function useShell({ onLoad }) {
     await startDrill(req, drillCommand(req));
   }, [busy, caps.recordings, listRuns, onLoad, openRun, say, startDrill]);
 
-  return { session, run, busy, caps };
+  // `echo` lets the scene hand its outgoing replay log to this history, so
+  // the console scrollback stays append-only across runs.
+  return { session, run, busy, caps, echo: say };
 }

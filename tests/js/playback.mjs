@@ -19,7 +19,7 @@ globalThis.React = { createElement: () => null, useState: () => [], useEffect: (
 
 const { fold, finish, initial } = await import("./ui/timeline.js");
 const { demoScript, cuesFromView } = await import("./ui/director.js");
-const { parseDrill, tokenize, drillCommand } = await import("./ui/terminal.js");
+const { parseDrill, tokenize, drillCommand, pendingIndex } = await import("./ui/terminal.js");
 const { standPoint, TOYS } = await import("./ui/stage.js");
 
 let fails = 0;
@@ -160,6 +160,40 @@ eq("the echoed command round-trips",
     }
   }
   ok("scrubbing to a beat == stepping to it", same);
+}
+
+/* ---- the console keeps its place when the two log lists move ---- */
+{
+  // This is the second-drill bug, reduced. The console shows session+replay;
+  // typing a command grows the session while the replay still holds the old
+  // run, and then the new run replaces the replay with a short header. An
+  // index into the join re-typed an old line and then skipped the rest.
+  const L = (t) => ({ tag: "sys", text: t });
+  const typed = new WeakSet();
+  const session = [L("banner"), L("cmd1")];
+  const replayA = [L("runA header"), L("A beat 1"), L("A beat 2")];
+
+  let lines = session.concat(replayA);
+  for (const e of lines) typed.add(e);                       // all caught up
+  eq("caught up means nothing pending", pendingIndex(lines, typed), -1);
+
+  // you type the second command: session grows, replay unchanged
+  const cmd2 = L("cmd2");
+  session.push(cmd2);
+  lines = session.concat(replayA);
+  eq("the new command is what types next", lines[pendingIndex(lines, typed)], cmd2);
+  typed.add(cmd2);
+
+  // the new run attaches: the replay is replaced by a shorter header
+  const replayB = [L("runB header")];
+  lines = session.concat(replayB);
+  eq("the new run's header types next, not an old line",
+     lines[pendingIndex(lines, typed)], replayB[0]);
+  typed.add(replayB[0]);
+  eq("...and then it is caught up again", pendingIndex(lines, typed), -1);
+
+  // stepping back shortens the replay; nothing re-types
+  eq("stepping back re-types nothing", pendingIndex(session.concat([]), typed), -1);
 }
 
 console.log(fails ? `\n${fails} FAILURE(S)` : "\nall checks passed");

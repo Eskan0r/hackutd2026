@@ -250,7 +250,10 @@ def build_app() -> FastAPI:
                            % busy.id,
                 )
             job = Job(id=uuid.uuid4().hex[:8], command=_command_line(req))
-            job.emit("cmd", job.command)
+            # "cmd-echo", not "cmd": the console already printed what was typed
+            # as a prompt line, and a second prompt line right under it reads
+            # as the command having run twice. This one is the canonical form.
+            job.emit("cmd-echo", job.command)
             _jobs[job.id] = job
         threading.Thread(target=_work, args=(job, req), daemon=True,
                          name="ares-drill-%s" % job.id).start()

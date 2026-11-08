@@ -158,7 +158,10 @@ def test_the_equivalent_cli_line_is_echoed(stub_drill):
     body = client.post("/api/drill", json={"recording": "fetch_through",
                                            "kill": False}).json()
     assert body["command"] == "ares drill fetch_through --no-kill"
-    assert body["lines"][0] == {"tag": "cmd", "text": "ares drill fetch_through --no-kill"}
+    # tagged cmd-echo, not cmd: the console prints the typed line itself, and a
+    # second prompt line under it looks like the command ran twice
+    assert body["lines"][0] == {"tag": "cmd-echo",
+                                "text": "ares drill fetch_through --no-kill"}
 
 
 def test_options_reach_the_drill_as_typed_fields(stub_drill):

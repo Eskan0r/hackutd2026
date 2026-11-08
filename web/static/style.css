@@ -433,6 +433,12 @@ img { image-rendering: pixelated; user-select: none; }
 }
 .console-input::placeholder { color: var(--term-dim); }
 
+/* While a drill runs there is no prompt to type at: the row says what is
+ * running instead of offering an input that would ignore you. */
+.ln-busy { align-items: baseline; }
+.busy-text { color: #f9f1a5; }
+.busy-text::after { content: "..."; }
+
 /* Which server the console is talking to. An operator console can start a
  * drill; a read-only one cannot, and says so rather than offering a button
  * that fails. */

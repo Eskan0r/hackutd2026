@@ -72,6 +72,9 @@ function useFitScale(ref) {
 
 const pose = (anim, extra = {}) => ({ anim, flip: false, mode: "loop", ...extra });
 
+/** What identifies the loaded run. Changing it restarts playback. */
+const keyOf = (source) => `${source.kind}:${source.key || source.variant}`;
+
 function Bubble({ say, below, align }) {
   if (!say) return null;
   return html`
@@ -210,11 +213,21 @@ export function Scene() {
   // What is loaded. The console switches it; ?run=... picks it on first paint.
   const [source, setSource] = useState({ kind: "demo", variant: "breakout" });
   const demoCount = useRef(0);
+  const sourceRef = useRef(source);
+  const replayRef = useRef([]);
+  const freezeRef = useRef(null);
   const onLoad = useCallback((next) => {
-    setSource(next.kind === "demo"
+    const to = next.kind === "demo"
       // Each `demo` alternates, so the same command shows both endings.
       ? { kind: "demo", variant: (demoCount.current += 1) % 2 ? "contained" : "breakout" }
-      : next);
+      : next;
+    // Loading a different run replaces the replay log. Hand the outgoing one
+    // to the console's own history first, so the scrollback stays append-only
+    // and a second drill does not wipe what the first one showed. (Reloading
+    // the *same* run live is not a change, so nothing is frozen then.)
+    if (keyOf(to) !== keyOf(sourceRef.current)) freezeRef.current?.(replayRef.current);
+    sourceRef.current = to;
+    setSource(to);
   }, []);
 
   useEffect(() => {
@@ -230,9 +243,10 @@ export function Scene() {
   cuesRef.current = cues;
 
   const live = Boolean(source.live);
-  const runKey = `${source.kind}:${source.key || source.variant}`;
+  const runKey = keyOf(source);
   const t = useTransport(cues.length, runKey, live);
-  const { session, run, busy, caps } = useShell({ onLoad });
+  const { session, run, busy, caps, echo } = useShell({ onLoad });
+  freezeRef.current = echo;
   const [logsOpen, setLogsOpen] = useState(false);
 
   // The authority on what the scene shows at this cursor.
@@ -472,6 +486,9 @@ export function Scene() {
   const stage = { width: `${STAGE_W * scale}px`, height: `${STAGE_H * scale}px` };
   const c = CASTLE_ANIMS[castle];
   const replay = useMemo(() => header.concat(target.lines), [header, target.lines]);
+  // Kept for onLoad, which needs the replay that is on screen *now* in order
+  // to freeze it before a new run replaces it.
+  useEffect(() => { replayRef.current = replay; }, [replay]);
 
   return html`
     <main class=${`scene ${logsOpen ? "scene-logs" : ""}`}>
