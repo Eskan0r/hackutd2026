@@ -12,4 +12,6 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["ares", "cli", "lab", "defender", "scoring"]   # cli reads leakbox.yaml via lab.leakbox.config
+# Everything cli/drill.py imports or spawns: lab.leakbox.config, scoring.score,
+# ares.*, and `python -m defender` as a subprocess.
+packages = ["ares", "cli", "lab", "lab.leakbox", "scoring", "defender"]

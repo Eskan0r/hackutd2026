@@ -32,6 +32,9 @@ services:
     environment:
       <<: *run-env
       EVENT_SOURCE: fake
+      # Which policy the trial runs under: leakbox.yaml (before) or leakbox.after.yaml.
+      # In-container path; the drill loop sets it per trial.
+      LEAKBOX_CONFIG: ${LEAKBOX_CONFIG:-/src/lab/leakbox.yaml}
     volumes:
       # Only the two packages the service imports. Not the repo root: the
       # fetch_through flaw fetches URLs from this container, and a mounted
@@ -53,6 +56,7 @@ services:
           - api.acme.test
           - pkg.acme.test
           - grader.acme.test
+          - grader-b.acme.test
           - metadata.ares.test
           - board.ares.test
           - outside.ares.test
@@ -64,6 +68,7 @@ services:
     environment:
       <<: *run-env
       EVENT_SOURCE: proxy
+      LEAKBOX_CONFIG: ${LEAKBOX_CONFIG:-/src/lab/leakbox.yaml}
     volumes:
       - ../ares:/src/ares:ro
       - ./:/src/lab:ro

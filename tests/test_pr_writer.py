@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from ares.contracts import KillRecord, LeverResult
-from cli import drill as lab
+from cli import lab
 from cli import github_pr, pr_writer
 from scoring import fixes
 
