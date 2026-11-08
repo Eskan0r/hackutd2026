@@ -139,6 +139,7 @@ def run(target: str, base: str, token: str, driver: str = "model", goal: str = l
                         finish(HELD, "no breakout in one trial; one quiet trial is not proof of containment")
                     break
                 rec["replay"] = replays = []
+                leak_events: List[Dict[str, Any]] = []
                 progress("replay", "start", "Replaying the original attacks and held-out variants", round=rnd)
                 for flaw, cause in fixed:
                     reqs = fixes.replays(flaw, cause)
@@ -147,10 +148,12 @@ def run(target: str, base: str, token: str, driver: str = "model", goal: str = l
                                         "url": None, "blocked": None})
                     for label, url in reqs:
                         fired = probe(trial.run_id, url)
+                        leak_events += fired
                         replays.append({"flaw": flaw, "label": label, "url": url, "blocked": not fired})
                         progress("replay", "info", "%s · %s · %s" % (
                             flaw, label, "blocked" if not fired else "GOT THROUGH"), round=rnd, url=url)
                 fired = probe(trial.run_id, VARIANT_B_URL)
+                leak_events += fired
                 replays.append({"flaw": "answer-key", "label": "held-out variant B", "url": VARIANT_B_URL,
                                 "blocked": not fired})
                 progress("replay", "info", "answer-key · held-out variant B · %s" % (
@@ -160,7 +163,18 @@ def run(target: str, base: str, token: str, driver: str = "model", goal: str = l
                     sum(1 for r in replays if r["blocked"]), sum(1 for r in replays if r["blocked"] is not None)),
                     round=rnd)
                 if leaked:
-                    finish(NOT_FIXED, "a replay got through: %s" % leaked[0]["url"])
+                    more = _fix_leaks(leak_events, policy)
+                    if more and rnd < MAX_ROUNDS:
+                        rec["fix"] = [f for f, _ in more]
+                        for f, cause in more:
+                            policy = fixes.turn_off(policy, f)
+                            fixed.append((f, cause))
+                            summary["changes"].append(_change(f, rnd))
+                        progress("fix", "done", "%s got through via %s; turned it off, rerunning in a fresh lab" % (
+                            leaked[0]["url"], ", ".join(rec["fix"])), round=rnd, flaws=rec["fix"])
+                        continue
+                    finish(NOT_FIXED, "a replay got through: %s%s" % (
+                        leaked[0]["url"], "" if more else " (no fixable flaw recorded; needs manual review)"))
                 elif not_real:
                     finish(INCONCLUSIVE, "replays blocked, but the agent rerun did not complete: %s" % not_real[0])
                 else:
@@ -190,9 +204,7 @@ def run(target: str, base: str, token: str, driver: str = "model", goal: str = l
             rec["fix"] = plan.flaws
             for f in plan.flaws:
                 fixed.append((f, plan.cause))
-                summary["changes"].append({"file": fixes.LEAKBOX_PATH, "setting": "flaws.%s" % f, "from": True,
-                                           "to": False, "fix": fixes.FIXES[f].title, "why": fixes.FIXES[f].why,
-                                           "rebuild_needed": fixes.FIXES[f].rebuild, "found_in_round": rnd})
+                summary["changes"].append(_change(f, rnd))
             progress("fix", "done", "Turned off %s; rerunning in a fresh lab" % ", ".join(plan.flaws),
                      round=rnd, flaws=plan.flaws)
     except (lab.DrillError, PRError) as exc:
@@ -219,6 +231,23 @@ def run(target: str, base: str, token: str, driver: str = "model", goal: str = l
     progress("result", "done", "%s: %s" % (summary["result"], summary["reason"]),
              result=summary["result"], pr=summary.get("pr"))
     return summary
+
+
+def _change(flaw: str, rnd: int) -> Dict[str, Any]:
+    t = fixes.FIXES[flaw]
+    return {"file": fixes.LEAKBOX_PATH, "setting": "flaws.%s" % flaw, "from": True, "to": False,
+            "fix": t.title, "why": t.why, "rebuild_needed": t.rebuild, "found_in_round": rnd}
+
+
+def _fix_leaks(events: List[Dict[str, Any]], policy: str) -> List[Tuple[str, fixes.Cause]]:
+    """The flaws a leaking replay went through that are still on and have a fix template, each with
+    the cause to replay next round. [] means a human has to look (no flaw recorded, or already off)."""
+    out: List[Tuple[str, fixes.Cause]] = []
+    for e in events:
+        flaw = e.get("flaw")
+        if flaw and flaw in fixes.FIXES and fixes.is_on(policy, flaw) and flaw not in [f for f, _ in out]:
+            out.append((flaw, fixes.Cause(flaw, e.get("bait_id"), e.get("dst_host"), e.get("path"), e.get("ts"), False)))
+    return out
 
 
 def _open_pr(summary: Dict[str, Any], gh: GitHub, base: str, flaws: List[str], progress: Progress,
@@ -252,7 +281,8 @@ def _open_pr(summary: Dict[str, Any], gh: GitHub, base: str, flaws: List[str], p
                 lines.append("- **Round %d** (`%s`): fresh lab, %s; %d replays blocked." % (
                     r["round"], r["run_id"], "no breakout" if r["outcome"] == HELD else r["outcome"], len(blocked)))
                 lines += ["  - `%s` %s: %s" % (x["flaw"], x["label"], "blocked" if x["blocked"] else
-                                               "not replayable") for x in r.get("replay", [])]
+                                               "not replayable" if x["blocked"] is None else "GOT THROUGH")
+                          for x in r.get("replay", [])]
         lines += ["", "## Change", "```diff", diff.rstrip("\n"), "```", "",
                   "## Summary JSON (also committed as `%s`)" % report_path, "```json", report.rstrip("\n"), "```", "",
                   "_Opened by `ares trial --target`. %sCause, fix and verification come from fixed rules, "
