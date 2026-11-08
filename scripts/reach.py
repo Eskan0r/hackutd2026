@@ -395,8 +395,10 @@ def main() -> int:
                         "limit; --pace 1.5 keeps one trial under it. 0 = no pacing.")
     p.add_argument("--min-interval", type=float, default=0.0,
                    help="seconds to wait between trials, to stay under a rate limit")
-    p.add_argument("--out", default="lab/runs/reach.jsonl",
-                   help="append one line per trial here; re-running resumes")
+    p.add_argument("--out", default="lab/runs/reach/reach.jsonl",
+                   help="append one line per trial here; re-running resumes. Kept in "
+                        "a subdir so the defender's event tail (lab/runs/*.jsonl) "
+                        "does not pick it up.")
     p.add_argument("--fresh", action="store_true", help="ignore and overwrite any existing --out")
     args = p.parse_args()
 

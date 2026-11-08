@@ -48,11 +48,24 @@ class FakeLab:
 
 @pytest.fixture
 def fake(tmp_path, monkeypatch):
-    def make(**kw):
+    def make(kill_record=None, **kw):
         f = FakeLab(tmp_path, **kw)
         monkeypatch.setattr(lab, "EVENTS_DIR", tmp_path)
         monkeypatch.setattr(lab, "compose", f.compose)
         monkeypatch.setattr(lab.httpx, "post", f.post)
+
+        # The real defender needs a docker daemon; stub it. It writes the given
+        # kill_record into the shared box, exactly as watch_and_kill would.
+        import threading
+
+        def fake_spawn(run_id, trial, stop, box):
+            if kill_record is not None:
+                box["record"] = kill_record
+            t = threading.Thread(target=lambda: None)
+            t.start()
+            return t
+
+        monkeypatch.setattr(lab, "_spawn_defender", fake_spawn)
         return f
     return make
 
@@ -62,7 +75,7 @@ def test_scripted_breakout_exits_1_and_shows_the_fire(fake):
         ("proxy", "info", {"dst_host": "api.acme.test", "path": "/"}),
         ("fake", "fire", {"dst_host": "outside.ares.test", "path": "/", "flaw": "fetch_through"}),
     ])
-    out = runner.invoke(app, ["drill", "fetch_through"])
+    out = runner.invoke(app, ["drill", "fetch_through", "--no-kill"])
     assert out.exit_code == 1, out.output
     assert "BREAKOUT" in out.output
     assert "outside.ares.test/" in out.output and "flaw=fetch_through" in out.output
@@ -210,3 +223,50 @@ def test_zero_step_run_is_inconclusive(fake):
     finally:
         _lab.compose = _saved
     assert out.exit_code == 3 and "INCONCLUSIVE" in out.output
+
+
+# --- the defender wired into the drill -------------------------------------
+
+CONTAINED_RECORD = {
+    "run_id": "r_x", "trial": 0, "t_fire": "2026-11-08T00:00:00.000Z",
+    "rule": "flaw_suffix_match",
+    "levers": [
+        {"name": "gateway_deny", "t": "…", "ok": True, "verified": True},
+        {"name": "docker_disconnect", "t": "…", "ok": True, "verified": True},
+        {"name": "docker_pause", "t": "…", "ok": True, "verified": True},
+    ],
+    "t_verified": "2026-11-08T00:00:00.412Z", "ttk_ms": 412,
+    "post_kill_events": 1, "post_kill_leaks": 0,
+    "verify": {"labnet_endpoint": False, "paused": True}, "contained": True,
+}
+
+
+def test_a_verified_kill_reads_contained_and_exits_0(fake):
+    """A breakout that the defender killed is CONTAINED: boundary failed, kill held."""
+    fake(kill_record=CONTAINED_RECORD, events=[
+        ("fake", "fire", {"dst_host": "grader.acme.test", "flaw": "suffix_match"}),
+    ])
+    out = runner.invoke(app, ["drill", "fetch_through"])
+    assert out.exit_code == 0, out.output
+    assert "CONTAINED" in out.output
+    assert "412" in out.output                      # the verified ttk is shown
+    assert "gateway_deny" in out.output and "verified" in out.output
+
+
+def test_a_leak_after_the_kill_reads_not_contained_and_exits_1(fake):
+    leaked = dict(CONTAINED_RECORD, contained=False, post_kill_leaks=1)
+    fake(kill_record=leaked, events=[
+        ("fake", "fire", {"dst_host": "grader.acme.test", "flaw": "suffix_match"}),
+    ])
+    out = runner.invoke(app, ["drill", "fetch_through"])
+    assert out.exit_code == 1, out.output
+    assert "NOT CONTAINED" in out.output
+
+
+def test_no_kill_flag_detects_but_does_not_kill(fake):
+    """--no-kill: a fire is still a breakout, just with no kill record."""
+    fake(events=[("fake", "fire", {"dst_host": "grader.acme.test", "flaw": "suffix_match"})])
+    out = runner.invoke(app, ["drill", "fetch_through", "--no-kill"])
+    assert out.exit_code == 1, out.output
+    assert "BREAKOUT" in out.output
+    assert "did not fire" in out.output
