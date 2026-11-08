@@ -1,0 +1,787 @@
+/* Ares -- sandbox view.
+ *
+ * Every colour comes from the art: the sandbox's grass and wood, Poyo's ink,
+ * fur, hoodie and clasp. Chrome is drawn with hard 1-unit steps (box-shadow
+ * stacks), never radii or blur, so it sits in the same pixel world as the
+ * sprites.
+ */
+
+:root {
+  --px: 4px;                      /* one chrome "pixel" */
+  --ink: #261432;                 /* Poyo's outline */
+  --fur: #c482e2;
+  --hoodie: #263074;
+  --clasp: #e6a05a;
+  --grass: #6ab04c;
+  --grass-dark: #4e8f3a;
+  --grass-deep: #3d7330;
+  --wood: #b5793c;
+  --wood-top: #d59a52;
+  --wood-lite: #ecb874;
+  --sand: #dcbc91;
+  --sand-lite: #ead2ad;
+  --sand-shade: #b78e62;
+  --paper: #fff8e6;
+  --go: #58bf68;
+  --go-hover: #63cc73;
+  --go-lite: #92e09c;
+  --go-dark: #33803f;
+  --no-sand: #f0c2b4;
+  --alarm: #e5483a;
+
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --term-bg: #0c0c0c;
+  --term-fg: #cccccc;
+  --term-dim: #767676;
+  --step: 120ms;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  /* a quiet meadow (scripts/make_scene_sprites.py), tiled at 3x */
+  background: var(--grass) url("/static/sprites/meadow.png") repeat;
+  background-size: 576px 576px;
+  image-rendering: pixelated;
+  overflow: hidden;
+}
+
+#root { height: 100%; }
+
+img { image-rendering: pixelated; user-select: none; }
+
+/* ------------------------------------------------------------ sprites */
+
+.sprite {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;            /* visual only for now */
+}
+
+.sprite > img {
+  display: block;
+  max-width: none;
+  animation-name: strip;
+  will-change: transform;
+}
+
+@keyframes strip {
+  from { transform: translateX(0); }
+  to   { transform: translateX(var(--strip-end, -100%)); }
+}
+
+.sprite.flip { transform: scaleX(-1); }
+
+/* a toy hops while Poyo is using it */
+.sprite.hop { animation: hop 400ms steps(2) infinite; }
+@keyframes hop {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 calc(var(--px) * -1.5); }
+}
+
+/* ------------------------------------------------------------ scene */
+
+/* The sandbox fills the window; when the logs open it shares the row with
+ * them and shrinks to fit what is left. */
+.scene {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* The left column: sandbox above, transport bar below. The bar is part of the
+ * column rather than fixed to the window so the sandbox gives up height for
+ * it, instead of the bar covering the sand. */
+.stage-col {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage-area {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* The sandbox is fitted inside this box, which starts below the Show logs
+ * button, so the button sits on the meadow and never on the sandbox. It does
+ * not clip (the sandbox is fitted inside it, never overhangs), so Poyo can
+ * fall in from the top of the window. */
+.stage-fit {
+  position: absolute;
+  inset: 72px 16px 16px;
+}
+
+.stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+}
+
+.ground {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Poyo's position is his feet; the sprite and bubble hang off that point. */
+.actor {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.actor.shake { animation: shake 240ms steps(4) infinite; }
+@keyframes shake {
+  0%, 100% { translate: 0 0; }
+  25% { translate: calc(var(--px) * -1) 0; }
+  75% { translate: var(--px) 0; }
+}
+
+/* --- the alarm ------------------------------------------------------------ */
+
+/* The siren on its pole drops from the top of the window when the castle
+ * catches, bounces once, and winds back up when the castle is whole. The
+ * pole is one 32x8 segment tiled to whatever length reaches the stage. */
+.rig {
+  position: absolute;
+  top: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+.rig-pole {
+  width: 100%;
+  background: url("/static/sprites/alarm-pole.png") repeat-y center bottom;
+  image-rendering: pixelated;
+}
+.rig-head { position: relative; width: 100%; aspect-ratio: 1; }
+.rig-in  { animation: rig-drop 520ms cubic-bezier(0.3, 0, 0.6, 1) 1 both; }
+.rig-out { animation: rig-raise 520ms cubic-bezier(0.5, 0, 0.8, 0.4) 1 both; }
+@keyframes rig-drop {
+  0%   { translate: 0 -100%; }
+  70%  { translate: 0 calc(var(--px) * 3); }
+  85%  { translate: 0 calc(var(--px) * -1); }
+  100% { translate: 0 0; }
+}
+@keyframes rig-raise {
+  0%   { translate: 0 0; }
+  20%  { translate: 0 calc(var(--px) * 2); }
+  100% { translate: 0 -100%; }
+}
+
+/* Two red beams on opposite sides of the lamp, sweeping round the whole
+ * screen. A square big enough to cover any window, centred on the lamp,
+ * spinning; it starts once the siren has landed. */
+.beams {
+  position: absolute;
+  width: 300vmax;
+  height: 300vmax;
+  translate: -50% -50%;
+  z-index: 4;
+  pointer-events: none;
+  background: conic-gradient(
+    rgb(229 72 58 / 0)    0deg  64deg,
+    rgb(229 72 58 / 0.34) 76deg 104deg,
+    rgb(229 72 58 / 0)    116deg 244deg,
+    rgb(229 72 58 / 0.34) 256deg 284deg,
+    rgb(229 72 58 / 0)    296deg 360deg);
+  -webkit-mask: radial-gradient(circle, transparent 0 calc(var(--px) * 4), #000 calc(var(--px) * 10));
+          mask: radial-gradient(circle, transparent 0 calc(var(--px) * 4), #000 calc(var(--px) * 10));
+  animation:
+    beams-on 200ms steps(2) 440ms 1 both,
+    beams-spin 1500ms linear 440ms infinite;
+}
+@keyframes beams-on   { from { opacity: 0; } to { opacity: 1; } }
+@keyframes beams-spin { from { rotate: 0deg; } to { rotate: 360deg; } }
+.beams.beams-out {
+  /* beams-spin must keep the exact timing it had in .beams: changing its
+   * delay mid-run is applied retroactively and snaps the beams ~105deg */
+  animation: beams-off 160ms steps(2) 1 both, beams-spin 1500ms linear 440ms infinite;
+}
+@keyframes beams-off { from { opacity: 1; } to { opacity: 0; } }
+
+/* --- the knock-out and comeback ------------------------------------------ */
+
+.dust { position: absolute; pointer-events: none; }
+
+/* stretched tall while falling, squashed flat on landing -- from the feet */
+.sprite.falling { scale: 0.881 1.136; transform-origin: 50% 100%; }
+.sprite.land { transform-origin: 50% 100%; animation: land 420ms steps(6) 1; }
+@keyframes land {
+  0%   { scale: 1.255 0.745; }
+  40%  { scale: 0.915 1.102; }
+  70%  { scale: 1.051 0.958; }
+  100% { scale: 1 1; }
+}
+
+/* the landing shadow grows as he gets closer */
+.fall-shadow {
+  position: absolute;
+  translate: -50% -50%;
+  background: #8f6a45;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.puff-anchor { position: absolute; left: 0; top: 0; z-index: 2; }
+.puff span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--s);
+  height: var(--s);
+  background: var(--c);
+  animation: puff 520ms steps(6) forwards;
+}
+@keyframes puff {
+  from { translate: 0 0; opacity: 1; }
+  to   { translate: var(--dx) var(--dy); opacity: 0; }
+}
+
+.bubble-anchor {
+  position: absolute;
+  left: 0;
+  translate: -50% 0;
+  z-index: 1000;
+  pointer-events: none;
+}
+/* near a side wall the bubble slides inward; its tail stays over Poyo */
+.anchor-left  { translate: -14% 0; }
+.anchor-right { translate: -86% 0; }
+
+/* Speech bubble: paper box, ink outline, a stepped tail pointing at Poyo. */
+.bubble {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  width: max-content;
+  max-width: 260px;
+  overflow-wrap: anywhere;          /* long URLs wrap inside the box */
+  padding: 8px 12px 9px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 600 15px/1.3 var(--mono);
+  box-shadow:
+    0 -3px 0 var(--ink), 0 3px 0 var(--ink), -3px 0 0 var(--ink), 3px 0 0 var(--ink),
+    3px 6px 0 rgb(38 20 50 / 0.25);
+  animation: pop 160ms steps(2) 1;
+}
+
+.bubble::after {                    /* the tail */
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -12px;
+  width: 9px;
+  height: 9px;
+  translate: -50% 0;
+  background: var(--paper);
+  box-shadow: -3px 0 0 var(--ink), 3px 0 0 var(--ink), 0 3px 0 var(--ink);
+  clip-path: polygon(-3px 0, 12px 0, 12px 12px, 3px 12px, 3px 6px, -3px 6px);
+}
+.bubble-left::after  { left: 14%; }
+.bubble-right::after { left: 86%; }
+/* flipped under Poyo near the top edge: the tail points up at him */
+.bubble-below::after { bottom: auto; top: -12px; rotate: 180deg; }
+
+.bubble-tool {
+  justify-self: start;
+  padding: 1px 6px;
+  background: var(--hoodie);
+  color: var(--paper);
+  font: 700 12px/1.4 var(--mono);
+  letter-spacing: 0.04em;
+}
+
+.bubble-think { color: #5b4a68; font-style: italic; }
+.bubble-think .bubble-tool { background: #6e8ce2; }
+.bubble-alarm { background: #ffe1d6; }
+.bubble-alarm .bubble-tool { background: var(--alarm); }
+.bubble-alarm .bubble-text { color: #8a1c12; font-weight: 800; }
+
+@keyframes pop {
+  from { scale: 0.85; }
+  to   { scale: 1; }
+}
+
+/* ------------------------------------------------------------ logs */
+
+.logs-btn {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 20;
+  padding: 10px 16px 12px;
+  border: 0;
+  cursor: pointer;
+  color: var(--ink);
+  background: var(--wood-top);
+  font: 700 15px/1 var(--mono);
+  letter-spacing: 0.04em;
+  box-shadow:
+    inset 0 var(--px) 0 var(--wood-lite),
+    inset 0 calc(var(--px) * -1) 0 var(--wood),
+    0 -3px 0 var(--ink), 0 3px 0 var(--ink), -3px 0 0 var(--ink), 3px 0 0 var(--ink),
+    0 7px 0 var(--ink);
+}
+.logs-btn:hover { background: var(--wood-lite); }
+.logs-btn:active { translate: 0 3px; box-shadow: 0 -3px 0 var(--ink), 0 3px 0 var(--ink), -3px 0 0 var(--ink), 3px 0 0 var(--ink); }
+.logs-btn:focus-visible { outline: 3px solid var(--clasp); outline-offset: 4px; }
+
+/* The console is a real column beside the sandbox and reads like a command
+ * prompt: black window, grey text, a title bar, a blinking block cursor.
+ * Opening overshoots (stretch) and the panel squashes back; closing winds
+ * up a touch before it snaps shut -- the same cartoon timing as the sprites. */
+.console {
+  --console-w: min(520px, 88vw);
+  position: relative;
+  z-index: 10;
+  flex: none;
+  width: 0;
+  overflow: hidden;
+  background: var(--term-bg);
+  transition: width 360ms cubic-bezier(0.6, -0.45, 0.7, 0.1);
+}
+.console-open {
+  width: var(--console-w);
+  transition: width 520ms cubic-bezier(0.3, 1.5, 0.55, 1);
+}
+
+.console-inner {
+  width: var(--console-w);
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  color: var(--term-fg);
+  border-left: 3px solid var(--ink);
+  transform-origin: right center;
+}
+.console-open .console-inner { animation: squash 520ms ease-out 1; }
+
+@keyframes squash {
+  0%   { transform: scale(1.119, 0.915); }
+  45%  { transform: scale(0.958, 1.043); }
+  75%  { transform: scale(1.017, 0.992); }
+  100% { transform: scale(1, 1); }
+}
+
+/* The Hide console button is fixed at the window's top-right and reaches
+ * ~60px down (16px offset + padding + its 7px drop shadow), so the bar is
+ * tall and right-padded enough to hold it whole -- otherwise it hangs over
+ * the first lines of the terminal. */
+.console-bar {
+  display: flex;
+  align-items: center;
+  min-height: 76px;
+  box-sizing: border-box;
+  padding: 0 196px 0 14px;
+  background: #1f1f1f;
+  border-bottom: 1px solid #333;
+  font: 13px/1.4 var(--mono);
+  color: var(--term-dim);
+  white-space: nowrap;
+}
+
+.console-scroll {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.console-body {
+  height: 100%;
+  overflow-y: auto;
+  padding: 14px 18px 24px 16px;
+  font: 14px/1.55 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  scrollbar-width: none;            /* native bar hidden ... */
+}
+.console-body::-webkit-scrollbar { display: none; }
+
+.console-thumb {                    /* ... replaced by a thin grey line */
+  position: absolute;
+  right: 4px;
+  width: 2px;
+  background: #4a4a4a;
+  pointer-events: none;
+}
+
+.ln { display: flex; gap: 10px; }
+.ts { color: var(--term-dim); flex: none; }
+.tag { flex: none; width: 6ch; font-weight: 700; }
+.txt { min-width: 0; }
+.prompt { color: var(--term-fg); }
+
+/* The console is typed into, so the prompt row holds a real input. It is a
+ * bare field: the terminal look is the console's, not the browser's. */
+.ln-cmd .txt, .ln-cmd { color: var(--term-fg); }
+.ln-input { align-items: baseline; }
+.console-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: var(--term-fg);
+  background: transparent;
+  font: inherit;
+  caret-color: var(--term-fg);
+}
+.console-input::placeholder { color: var(--term-dim); }
+
+/* While a drill runs there is no prompt to type at: the row says what is
+ * running instead of offering an input that would ignore you. */
+.ln-busy { align-items: baseline; }
+.busy-text { color: #f9f1a5; }
+.busy-text::after { content: "..."; }
+
+/* Which server the console is talking to. An operator console can start a
+ * drill; a read-only one cannot, and says so rather than offering a button
+ * that fails. */
+.console-mode {
+  margin-left: auto;
+  padding-left: 12px;
+  padding: 1px 6px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.mode-ro { color: var(--term-dim); box-shadow: inset 0 0 0 1px #3a3a3a; }
+.mode-op { color: #0c0c0c; background: #f9f1a5; }
+
+.tag-tool .tag { color: #16c60c; }
+.tag-http .tag { color: #3a96dd; }
+.tag-llm .tag { color: #b4009e; }
+.tag-sys .txt, .tag-out .txt { color: var(--term-dim); }
+.tag-FIRE .tag, .tag-FIRE .txt, .tag-BREACH .tag, .tag-BREACH .txt { color: #e74856; }
+.tag-KILL .tag, .tag-KILL .txt { color: #f9f1a5; }
+.tag-PASS .tag, .tag-PASS .txt { color: #16c60c; }
+.tag-step .tag, .tag-step .txt { color: #3a96dd; }
+.tag-warn .tag, .tag-warn .txt { color: #f9f1a5; }
+.tag-error .tag, .tag-error .txt { color: #e74856; }
+.tag-cmd-echo .txt { color: var(--term-fg); font-weight: 700; }
+/* The verdict is the claim the drill makes; it gets the CLI's colours. */
+.tag-verdict-contained .txt, .tag-verdict-held .txt { color: #16c60c; font-weight: 700; }
+.tag-verdict-not_contained .txt, .tag-verdict-breakout .txt { color: #e74856; font-weight: 700; }
+.tag-verdict-inconclusive .txt { color: #f9f1a5; font-weight: 700; }
+.tag-verdict-chain_broken .txt, .tag-verdict-error .txt { color: #e74856; font-weight: 700; }
+
+.cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.1em;
+  vertical-align: text-bottom;
+  background: var(--term-fg);
+  animation: blink 1s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ------------------------------------------------------- transport bar */
+
+/* A plank along the bottom of the sandbox. Same wood and ink as the buttons,
+ * so it reads as part of the same box rather than browser chrome. */
+.transport {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  margin: 0 16px 16px;
+  background: var(--wood-top);
+  box-shadow:
+    inset 0 var(--px) 0 var(--wood-lite),
+    inset 0 calc(var(--px) * -1) 0 var(--wood),
+    0 calc(var(--px) * -1) 0 var(--ink),
+    0 var(--px) 0 var(--ink),
+    calc(var(--px) * -1) 0 0 var(--ink),
+    var(--px) 0 0 var(--ink);
+}
+
+.tc-btn {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  color: var(--ink);
+  background: var(--sand);
+  box-shadow:
+    inset 0 var(--px) 0 var(--sand-lite),
+    inset 0 calc(var(--px) * -1) 0 var(--sand-shade),
+    0 calc(var(--px) * -1) 0 var(--ink),
+    0 var(--px) 0 var(--ink),
+    calc(var(--px) * -1) 0 0 var(--ink),
+    var(--px) 0 0 var(--ink);
+}
+.tc-btn-wide {
+  width: 58px;
+  background: var(--go);
+  box-shadow:
+    inset 0 var(--px) 0 var(--go-lite),
+    inset 0 calc(var(--px) * -1) 0 var(--go-dark),
+    0 calc(var(--px) * -1) 0 var(--ink),
+    0 var(--px) 0 var(--ink),
+    calc(var(--px) * -1) 0 0 var(--ink),
+    var(--px) 0 0 var(--ink);
+}
+.tc-btn:hover:not(:disabled) { background: var(--sand-lite); }
+.tc-btn-wide:hover:not(:disabled) { background: var(--go-hover); }
+.tc-btn:active:not(:disabled) { translate: 0 var(--px); }
+.tc-btn:disabled { opacity: 0.4; cursor: default; }
+.tc-btn:focus-visible { outline: 3px solid var(--clasp); outline-offset: 4px; }
+
+.tc-icon { width: 18px; height: 18px; display: block; }
+
+.tc-scrub {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tc-count {
+  flex: none;
+  font: 700 13px/1 var(--mono);
+  color: var(--ink);
+  min-width: 6ch;
+}
+
+/* The scrubber is drawn as a sand groove with a wooden handle: no radii, no
+ * gradients, so it matches the sprites. */
+.tc-scrub input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 18px;
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.tc-scrub input[type="range"]::-webkit-slider-runnable-track {
+  height: 8px;
+  background: var(--sand-shade);
+  box-shadow: inset 0 2px 0 var(--wood), 0 -2px 0 var(--ink), 0 2px 0 var(--ink);
+}
+.tc-scrub input[type="range"]::-moz-range-track {
+  height: 8px;
+  background: var(--sand-shade);
+  box-shadow: inset 0 2px 0 var(--wood), 0 -2px 0 var(--ink), 0 2px 0 var(--ink);
+}
+.tc-scrub input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 18px;
+  margin-top: -5px;
+  background: var(--paper);
+  box-shadow:
+    0 -2px 0 var(--ink), 0 2px 0 var(--ink), -2px 0 0 var(--ink), 2px 0 0 var(--ink);
+}
+.tc-scrub input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 18px;
+  border: 0;
+  background: var(--paper);
+  box-shadow:
+    0 -2px 0 var(--ink), 0 2px 0 var(--ink), -2px 0 0 var(--ink), 2px 0 0 var(--ink);
+}
+.tc-scrub input[type="range"]:focus-visible { outline: 3px solid var(--clasp); outline-offset: 4px; }
+
+.tc-now {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 40%;
+  overflow: hidden;
+  font: 13px/1.2 var(--mono);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.tc-beat {
+  font-weight: 700;
+  padding: 2px 6px;
+  background: var(--paper);
+  box-shadow: 0 -2px 0 var(--ink), 0 2px 0 var(--ink), -2px 0 0 var(--ink), 2px 0 0 var(--ink);
+}
+.tc-source { overflow: hidden; text-overflow: ellipsis; opacity: 0.75; }
+
+@media (max-width: 720px) {
+  .transport { flex-wrap: wrap; }
+  .tc-now { max-width: 100%; }
+}
+
+/* ------------------------------------------------------------ login */
+
+.login {
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+/* A wooden sign: plank face, lit top edge, shaded bottom edge, ink outline
+ * drawn as hard box-shadows so it reads as pixel art, not a rounded card. */
+.sign {
+  position: relative;
+  display: grid;
+  gap: calc(var(--px) * 4);
+  width: min(360px, calc(100vw - 32px));
+  margin-top: 180px;               /* room for Poyo standing on top */
+  padding: calc(var(--px) * 7) calc(var(--px) * 6) calc(var(--px) * 6);
+  background:
+    linear-gradient(var(--wood-lite) 0 var(--px), transparent var(--px)),
+    var(--wood-top);
+  box-shadow:
+    inset 0 calc(var(--px) * -2) 0 var(--wood),
+    0 calc(var(--px) * -1) 0 var(--ink),
+    0 var(--px) 0 var(--ink),
+    calc(var(--px) * -1) 0 0 var(--ink),
+    var(--px) 0 0 var(--ink),
+    calc(var(--px) * 2) calc(var(--px) * 3) 0 var(--grass-deep);
+}
+
+.sign-no { animation: no 360ms steps(6) 1; }
+
+@keyframes no {
+  0%, 100% { translate: 0 0; }
+  20% { translate: calc(var(--px) * -3) 0; }
+  40% { translate: calc(var(--px) * 3) 0; }
+  60% { translate: calc(var(--px) * -2) 0; }
+  80% { translate: calc(var(--px) * 2) 0; }
+}
+
+/* Poyo stands on the sign: a zero-size point at the sign's top centre that
+ * his sprite hangs from by its foot anchor. */
+.sign-poyo {
+  position: absolute;
+  left: 50%;
+  top: -22px;                      /* lifted so his feet clear the sign */
+  width: 0;
+  height: 0;
+}
+
+.sign-title {
+  margin: 0;
+  color: var(--ink);
+  font: 700 22px/1.2 var(--mono);
+  letter-spacing: 0.02em;
+}
+
+.row { display: grid; gap: calc(var(--px) * 2); }
+
+.label {
+  color: var(--ink);
+  font: 700 14px/1 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.error {
+  margin: 0;
+  color: #7a1d14;
+  font: 700 14px/1.3 var(--mono);
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--px) * 3);
+  padding: calc(var(--px) * 2) calc(var(--px) * 3);
+  background: var(--sand);
+  box-shadow:
+    inset 0 var(--px) 0 var(--sand-shade),
+    inset var(--px) 0 0 var(--sand-shade),
+    0 calc(var(--px) * -1) 0 var(--ink),
+    0 var(--px) 0 var(--ink),
+    calc(var(--px) * -1) 0 0 var(--ink),
+    var(--px) 0 0 var(--ink);
+  transition: background var(--step) steps(2);
+}
+
+.field:focus-within {
+  background: var(--sand-lite);
+  box-shadow:
+    inset 0 var(--px) 0 var(--sand-shade),
+    inset var(--px) 0 0 var(--sand-shade),
+    0 calc(var(--px) * -1) 0 var(--hoodie),
+    0 var(--px) 0 var(--hoodie),
+    calc(var(--px) * -1) 0 0 var(--hoodie),
+    var(--px) 0 0 var(--hoodie),
+    0 0 0 calc(var(--px) * 2) var(--clasp);
+}
+
+.icon { width: 22px; height: 22px; flex: none; }
+
+.field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 600 18px/1.4 var(--mono);
+  letter-spacing: 0.04em;
+  padding: var(--px) 0;
+}
+
+.go {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--px) * 3);
+  height: calc(var(--px) * 12);
+  margin-top: var(--px);
+  border: 0;
+  cursor: pointer;
+  color: #fff;
+  font: 700 18px/1 var(--mono);
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 0 var(--go-dark);
+  background: var(--go);
+  box-shadow:
+    inset 0 var(--px) 0 var(--go-lite),
+    inset 0 calc(var(--px) * -2) 0 var(--go-dark),
+    0 calc(var(--px) * -1) 0 var(--ink),
+    0 var(--px) 0 var(--ink),
+    calc(var(--px) * -1) 0 0 var(--ink),
+    var(--px) 0 0 var(--ink),
+    0 calc(var(--px) * 2) 0 var(--ink);
+  transition: translate 60ms steps(1);
+}
+
+.go:hover { background: var(--go-hover); }
+.go:active, .go:disabled {
+  translate: 0 var(--px);
+  box-shadow:
+    inset 0 var(--px) 0 var(--go-dark),
+    0 calc(var(--px) * -1) 0 var(--ink),
+    0 var(--px) 0 var(--ink),
+    calc(var(--px) * -1) 0 0 var(--ink),
+    var(--px) 0 0 var(--ink);
+}
+.go:focus-visible { outline: var(--px) solid var(--clasp); outline-offset: var(--px); }
+.icon-go { width: 26px; height: 26px; }
+
+.sign-no .field { background: var(--no-sand); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sprite > img { animation-play-state: paused !important; }
+  .sprite.hop, .actor.shake, .sign-no, .bubble { animation: none; }
+  .rig-in, .rig-out { animation: none; }
+  .rig-out, .beams.beams-out { visibility: hidden; }
+  .beams { animation: none; rotate: 90deg; }
+  .console, .console-open { transition: none; }
+  .console-open .console-inner { animation: none; }
+}

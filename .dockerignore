@@ -22,6 +22,7 @@ runs/
 # Not needed inside any image
 tests/
 scripts/
+web/
 docs/
 ARCHITECTURE.md
 CLAUDE.md

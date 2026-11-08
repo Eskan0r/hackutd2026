@@ -13,3 +13,6 @@ runs/
 ares.key
 .env
 *.egg-info/
+
+# npm run dev: the dashboard log
+.ares-dev/

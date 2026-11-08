@@ -15,9 +15,27 @@ signer (`scoring/`), the shared contracts and hash-chained event log (`ares/`), 
 CLI (`cli/`): `ares drill` runs n trials and prints verdicts with Clopper–Pearson intervals;
 `ares drill --target` runs the whole containment + fix + PR loop in one command (below).
 
-Not built yet: the DNS sinkhole and the CI gate. The dashboard is on the `web-app` branch.
+Also built: the dashboard (`web/`). It reports only what the evidence supports on every
+screen — a pull nothing observed reads **unverified**, never contained.
+
+Not built yet: the DNS sinkhole and the CI gate.
 
 ## Setup
+
+With Node 18+ installed, on Windows, macOS or Linux:
+
+```bash
+npm run setup       # venv, dependencies, the `ares` command, .env, Docker check (safe to re-run)
+npm run dev         # the dashboard + `ares drill --target $ARES_TARGET --mode live`, one command
+npm run dev -- --target owner/repo --mode scripted   # anything after -- goes to `ares drill`
+npm run dashboard   # just the read-only dashboard, on 127.0.0.1:8090
+```
+
+`package.json` is a task runner only: no dependencies, nothing to `npm install`. `npm run dev`
+opens the dashboard before the drill starts, so it follows every run as it lands; its request
+log goes to `.ares-dev/web.log`. When the drill ends the dashboard stays up until Ctrl+C.
+
+Or by hand:
 
 ```bash
 python3.12 -m venv .venv && ./.venv/bin/python -m pip install -r requirements.txt
@@ -156,7 +174,47 @@ docker compose down     # tear down
 Recordings in `agent/recorded/`: `fetch_through` (boundary failure), `soft_kill` (kill
 failure), `blocked` (the held-out rerun that should pass).
 
-### 4. A real model — needs a key
+### 4. Watch it happen — the dashboard
+
+```bash
+./.venv/bin/python -m web.server      # http://127.0.0.1:8090
+```
+
+A pixel-art view of the drill: Poyo digging through a sandbox that fills the screen, a
+thought bubble saying what he is doing right now, a shovel or bucket per agent tool that he
+walks over to and uses, and the sandcastle — the boundary — catching fire with the siren
+dropping in when he touches the bait and the kill lands.
+
+**Playback.** The bar under the sandbox plays, pauses, steps back a beat, steps forward a
+beat and scrubs. Stepping back really goes back: the fire goes out, the log shortens, Poyo
+is where he was. That works because the whole scene is a pure function of one cursor
+(`fold(cues, cursor)` in `web/static/ui/timeline.js`), and `tests/test_playback.py` pins
+that scrubbing to a beat equals stepping to it.
+
+**The console** (*Show console*) is a prompt you can type into: `help`, `runs`,
+`open latest`, `demo`, and `ares drill ...`. It reads the same event files the CLI does and
+**cannot start a drill or pull a lever** — `GET` only, enforced by a test. Typing
+`ares drill` there prints the command, copies it to your clipboard, then watches for the run
+you start and attaches to it as it runs.
+
+For a console that can start one itself:
+
+```bash
+./.venv/bin/python -m web.server --operator    # http://127.0.0.1:8091
+```
+
+A separate app on a separate port, loopback only, that adds `POST /api/drill`. The viewer
+app gains no route — `tests/test_operator.py` pins that importing the operator does not arm
+it — and it reaches no verdict of its own: both it and `ares drill` call `cli/verdict.py`,
+so the page cannot conclude anything the CLI would not. The console's prompt parses typed
+fields; it never forwards a command string to a shell.
+
+No build step: React and htm are vendored under `web/static/vendor/`, so `python -m
+web.server` is the whole toolchain and the page comes up with no network.
+
+`?run=latest` or `?run=<key>` opens straight into one run instead of the demo.
+
+### 5. A real model — needs a key
 
 Get one at **[build.nvidia.com](https://build.nvidia.com)**: free, no credit card, and
 **no Brev credits** (Brev rents GPUs; this is the hosted API). Free tier is ~40 req/min.
@@ -181,7 +239,10 @@ dummy key the harness uses) — see `lab/README.md`.
 | `lab/` | Leakbox: policy proxy with flaw toggles, fake services, bait, the sandbox image |
 | `gateway/` | LLM reverse proxy: key swap, fixed upstreams, caps, and kill lever 1 |
 | `agent/` | harness, tools, scripted replay, recordings |
-| `cli/` | the `ares` command: `drill.py` runs n trials and decides verdicts; `lab.py` runs one trial (`ares trial`); `pipeline.py`, `github_pr.py`, `pr_writer.py` name the flaw and open the fix PR; `main.py` is the Typer front end |
+| `defender/` | the event tailer and levers 2–3; verifies every pull via `docker inspect` |
+| `scoring/` | the scorer (Clopper–Pearson intervals) and the report signer |
+| `cli/` | the `ares` command: `drill.py` runs n trials and decides verdicts; `lab.py` runs one trial (`ares trial`) and `verdict.py` says what it proved; `pipeline.py`, `github_pr.py`, `pr_writer.py` name the flaw and open the fix PR; `main.py` is the Typer front end |
+| `web/` | the dashboard: read-only FastAPI API + a React page, with a seekable sandbox replay (play/pause/step) and a console that can start a single trial. React is vendored under `static/vendor/`, so there is no `npm install` and no CDN at demo time. `operator.py` is the separate, opt-in app that can start a drill |
 | `tests/` | hermetic (a stub upstream stands in for NVIDIA NIM; a stub lab stands in for Docker) |
 | `scripts/` | `demo_kill.py`, `live_check.py` |
 
