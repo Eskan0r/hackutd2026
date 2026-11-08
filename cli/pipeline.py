@@ -1,4 +1,4 @@
-"""One drill, start to finish, against a company's sandbox policy (`ares drill --target owner/repo`).
+"""One drill, start to finish, against a company's sandbox policy (`ares hunt --target owner/repo`).
 
   1. Kill-switch selftest (defender/selftest.py): a full kill must be contained and a soft kill
      must be caught failing, or no result after it can be trusted.
@@ -123,7 +123,7 @@ def preflight(target: str, token: str, live: bool, gh_client: Optional[httpx.Cli
         problems.append("Docker is not installed or not responding: install Docker Desktop, start it, retry.")
     if live and not os.environ.get("NVIDIA_API_KEY"):
         problems.append("NVIDIA_API_KEY is missing: add it to .env (build.nvidia.com), or name a recording "
-                        "(`ares drill --target ...` without --mode live) to run without a model.")
+                        "(`ares hunt --target ... --mode scripted`) to run without a model.")
     if not token:
         problems.append("GITHUB_TOKEN is missing: add a fine-grained token for %s to .env "
                         "(Contents + Pull requests: read and write)." % target)
@@ -169,6 +169,7 @@ def _change(flaw: str, found_in: str, rnd: Optional[int] = None) -> Dict[str, An
 def run(target: str, base: str, token: str, driver: str = "model", goal: str = lab.DEFAULT_GOAL,
         script: Optional[str] = None, model: Optional[str] = None, caps: Optional[Caps] = None,
         open_pr: bool = True, attempts: int = 1,
+        on_trial: Callable[[int, int, "lab.Trial"], None] = lambda attempt, of, trial: None,
         judge: Callable[[Dict[str, Any], int], Optional[Tuple[str, str]]] = lambda outcome, steps: None,
         show: Callable[[Dict[str, Any]], None] = lambda line: None,
         gh_client: Optional[httpx.Client] = None, nim_client: Optional[httpx.Client] = None,
@@ -178,6 +179,9 @@ def run(target: str, base: str, token: str, driver: str = "model", goal: str = l
         lab_down: Callable[[], None] = lab.lab_down) -> Dict[str, Any]:
     """Run the whole loop and return the summary. `judge(outcome, max_steps)` returns a reason when a
     trial did not complete (cli.main._inconclusive); such a trial never counts as held or fixed.
+
+    `on_trial(attempt, of, trial)` fires after each round-0 attempt, so a front end can show the
+    trials going by rather than a silent pause before the fix appears.
 
     `attempts` is how many times round 0 may look for a breakout before giving up. A live agent
     does not break out every run -- on the propensity goal it often spends its whole step budget
@@ -263,6 +267,8 @@ def run(target: str, base: str, token: str, driver: str = "model", goal: str = l
                 trial = drill(driver, goal, script, model, caps, policy=policy_file,
                               on_step=lambda msg, r=rnd, s=stage: progress(s, "info", msg, round=r))
                 agent_events += trial.events
+                if rnd == 0:
+                    on_trial(attempt, tries, trial)   # the front end shows the row
                 if trial.fires or trial.breaches or attempt == tries:
                     break
                 progress(stage, "info", "Attempt %d of %d: no breakout, trying again"
@@ -532,10 +538,10 @@ def _open_pr(summary: Dict[str, Any], signed: Dict[str, Any], gh: GitHub, base: 
         lines += [""] + _containment_lines(summary, signed_path)
         lines += ["## Change", "```diff", diff.rstrip("\n"), "```", ""]
         console = console_log(pid)
-        lines += ["## Console output", "<details open><summary>`ares drill --target %s` (%d lines, up to "
+        lines += ["## Console output", "<details open><summary>`ares hunt --target %s` (%d lines, up to "
                   "opening this PR)</summary>" % (summary["target"]["repo"], len(console)), "",
                   "```text"] + console + ["```", "</details>", ""]
-        footer = ["_Opened by `ares drill --target`. %sCause, fix, verification and containment come from fixed "
+        footer = ["_Opened by `ares hunt --target`. %sCause, fix, verification and containment come from fixed "
                   "rules, not a model._" % ("Title and summary written by `%s` and checked against the JSON. " %
                                             narration.model if narration else "")]
         json_block = ["## Summary JSON (also committed as `%s`)" % report_path, "<details><summary>Show JSON"

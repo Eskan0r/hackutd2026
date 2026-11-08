@@ -1,4 +1,4 @@
-"""`ares drill --target`: drill -> fix -> fresh rerun -> replay -> PR, in one run.
+"""`ares hunt --target`: drill -> fix -> fresh rerun -> replay -> PR, in one run.
 
 Hermetic: the lab (drill, probe, lab_down) and GitHub are faked. Each fake trial is driven by the
 policy file the pipeline hands it, the way the real lab is: a flaw that is off cannot fire.
@@ -352,7 +352,7 @@ def test_round_zero_retries_until_the_agent_breaks_out(run):
 
 
 def test_one_attempt_is_still_the_default(run):
-    """`ares drill --target` must not silently start retrying."""
+    """A caller that does not ask for retries must not silently get them."""
     fake = FlakyLab(["suffix_match"], breaks_on=3)
     summary, gh, out = run(fake)
 
@@ -385,3 +385,25 @@ def test_retries_do_not_leak_into_the_verification_round(run):
     assert summary["rounds"][0]["attempts"] == 2
     # round 1 is the rerun on the fixed policy: exactly one trial
     assert fake.drills == 3, "2 attempts in round 0 + 1 verification trial"
+
+
+def test_each_round_zero_attempt_is_reported(run):
+    """`ares hunt --target` sat silent through every attempt and then produced a
+    fix out of nowhere; the front end needs each trial as it happens."""
+    fake = FlakyLab(["suffix_match"], breaks_on=3)
+    seen = []
+    summary, gh, out = run(fake, attempts=5, on_trial=lambda a, of, t: seen.append((a, of, bool(t.fires))))
+
+    assert seen == [(1, 5, False), (2, 5, False), (3, 5, True)]
+    assert summary["result"] == "fixed"
+
+
+def test_verification_rounds_are_not_reported_as_attempts(run):
+    """on_trial is the hunt for a breakout, not every trial the pipeline runs:
+    a rerun on the fixed policy is a different question and has its own stage."""
+    fake = FlakyLab(["suffix_match"], breaks_on=1)
+    seen = []
+    summary, gh, out = run(fake, attempts=3, on_trial=lambda a, of, t: seen.append(a))
+
+    assert seen == [1], "round 0 broke out first try; the round-1 rerun is not an attempt"
+    assert summary["result"] == "fixed"

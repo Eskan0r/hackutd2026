@@ -13,7 +13,7 @@ policy), the LLM gateway (`gateway/`, kill lever 1), the agent harness (`agent/`
 defender (`defender/`, all three levers with `docker inspect` verification), the scorer and
 signer (`scoring/`), the shared contracts and hash-chained event log (`ares/`), and the `ares`
 CLI (`cli/`): `ares drill` runs n trials and prints verdicts with Clopper–Pearson intervals;
-`ares drill --target` runs the whole containment + fix + PR loop in one command (below).
+`ares hunt --target` runs the whole containment + fix + PR loop in one command (below).
 
 Also built: the dashboard (`web/`). It reports only what the evidence supports on every
 screen — a pull nothing observed reads **unverified**, never contained.
@@ -27,7 +27,7 @@ With Node 18+ installed, on Windows, macOS or Linux:
 ```bash
 npm run setup       # venv, dependencies, `ares` on your PATH, .env, Docker check (safe to re-run)
 ares drill          # then, from any terminal: a 20-trial drill on the recorded agent
-npm run dev         # the dashboard + `ares drill --target $ARES_TARGET --mode live`, one command
+npm run dev         # the dashboard + `ares hunt --target $ARES_TARGET --mode live`, one command
 npm run dev -- --target owner/repo --mode scripted   # anything after -- goes to `ares drill`
 npm run dashboard   # just the read-only dashboard, on 127.0.0.1:8090
 ```
@@ -94,8 +94,8 @@ ares setup-target <you>/<repo>
 **Run it** (one terminal; everything starts and stops on its own):
 
 ```bash
-ares drill --target <you>/<repo>               # recorded agent: deterministic, no model calls
-ares drill --target <you>/<repo> --mode live   # live Nemotron agent
+ares hunt --target <you>/<repo> --mode scripted   # recorded agent: deterministic, no model calls
+ares hunt --target <you>/<repo>                   # live Nemotron agent (the default)
 ```
 
 The PR description includes the containment table, the run's console output (exactly what
@@ -147,7 +147,7 @@ ares drill --drill normal --policy after --n 1     # the fix did not break usefu
 ares drill --mode live --n 3                       # live Nemotron instead of the recording; needs NVIDIA_API_KEY
 ares trial fetch_through                           # one trial with the full evidence/kill printout (exit 3 = inconclusive)
 ares fix lab/runs/kills/<run>.json [--open-pr]     # name the flaw behind a kill, print the leakbox.yaml change, or open a PR
-ares drill --target owner/repo                     # the whole containment + fix + PR loop; needs GITHUB_TOKEN
+ares hunt --target owner/repo                     # the whole containment + fix + PR loop; needs GITHUB_TOKEN
 ares flaws [--policy after]                        # list what each policy leaves on; `ares flaws off <name>` edits leakbox.yaml
 ares down                                          # tear down
 ```

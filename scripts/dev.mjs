@@ -1,7 +1,7 @@
 // npm run dev -- the dashboard and a drill, in one command.
 //
 //   npm run dev                         drill ARES_TARGET from .env, live agent (ARES_MODEL)
-//   npm run dev -- --target o/r --mode scripted     anything after -- goes to `ares drill`
+//   npm run dev -- --target o/r --mode scripted     anything after -- goes to `ares hunt`
 //   npm run dashboard                   just the dashboard (same as --no-drill)
 //
 // The dashboard comes up first and the browser opens on it, so its follow mode
@@ -32,9 +32,9 @@ if (!hasVenv()) {
   process.exit(1);
 }
 
-/** The `ares drill` arguments: whatever came after `--`, else ARES_TARGET. */
+/** The `ares hunt` arguments: whatever came after `--`, else ARES_TARGET. */
 function drillArgv() {
-  if (drillArgs.length) return ["drill", ...drillArgs];
+  if (drillArgs.length) return ["hunt", ...drillArgs];
   const target = process.env.ARES_TARGET || fileEnv.ARES_TARGET;
   if (!target) {
     bad("nothing to drill: set ARES_TARGET=owner/repo in .env, or pass arguments,");
@@ -42,8 +42,8 @@ function drillArgv() {
     console.log("    or    npm run dashboard   (just the viewer)");
     process.exit(1);
   }
-  // --target alone replays a recording; live is the run that can actually breach.
-  return ["drill", "--target", target, "--mode", process.env.ARES_MODE || fileEnv.ARES_MODE || "live"];
+  // `hunt` stops at the first breakout and takes it through fix -> replay -> PR.
+  return ["hunt", "--target", target, "--mode", process.env.ARES_MODE || fileEnv.ARES_MODE || "live"];
 }
 
 async function dashboardUp() {

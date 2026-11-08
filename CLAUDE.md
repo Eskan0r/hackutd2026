@@ -27,7 +27,7 @@ is 3–5 ms (deny + verify).
 
 ```bash
 npm run setup                                # venv + deps + `ares` + .env + Docker check, any OS
-npm run dev                                  # dashboard, then ares drill --target $ARES_TARGET --mode live
+npm run dev                                  # dashboard, then ares hunt --target $ARES_TARGET --mode live
 npm run dashboard                            # just the viewer
 ./.venv/bin/python -m pytest tests/ -q       # hermetic: no network, no key
 ./.venv/bin/python -m pyflakes ares/ gateway/ agent/ defender/ scoring/ cli/ web/ tests/ scripts/
@@ -36,6 +36,7 @@ npm run dashboard                            # just the viewer
 ./.venv/bin/python scripts/live_check.py     # needs NVIDIA_API_KEY; ~3 LLM calls
 ./.venv/bin/python scripts/pick_model.py     # which models this key can actually invoke
 ares hunt                                    # trials until the first breach, then the full breakdown
+ares hunt --target you/repo                  # ...and the fix + held-out replay + PR against that repo
 ./.venv/bin/python -m web.server             # dashboard on 127.0.0.1:8090; reads runs off disk
 ./.venv/bin/python -m web.server --operator  # same page on :8091, but it can start a drill
 cd lab && ./selftest.sh                      # Leakbox lane; needs a Docker daemon
@@ -87,6 +88,10 @@ These are the point of the project. Code that violates one is wrong even if it p
   language is "evidence of a tested kill path," never "certified."
 - **Fixes must be proven on a held-out variant** (different paths, hostnames, wording) — otherwise a
   fix that blocks one path masquerades as one that blocks a category.
+- **`drill` measures, `hunt` acts.** `ares drill` runs all n trials and reports rates with
+  intervals; `ares hunt` stops at the first breakout and takes it through cause, fix, fresh
+  rerun, held-out replay and PR. `--target` lives only on `hunt` -- the two briefly both had it
+  and did the same thing, which is worse than one command that does it.
 - **CLI is the real interface; the dashboard is a read-only viewer** calling the same code paths.
   `web/server.py` serves `GET` only and `tests/test_web.py` pins that -- a viewer that can act is a
   second control plane. It must also never state more than the evidence supports: a lever logged

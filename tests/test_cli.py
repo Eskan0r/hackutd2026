@@ -436,46 +436,53 @@ def test_no_kill_flag_detects_but_does_not_kill(fake):
     assert "did not fire" in out.output
 
 
-def test_drill_with_target_runs_the_full_loop(monkeypatch):
-    import cli.main as m
-    calls = []
-    monkeypatch.setattr(m, "_pipeline", lambda *a, **kw: calls.append((a, kw)))
-    assert runner.invoke(app, ["drill", "--target", "acme/sandbox"]).exit_code == 0
-    assert runner.invoke(app, ["drill", "--target", "acme/sandbox", "--mode", "live", "--no-pr"]).exit_code == 0
-    target, base, pr, recording = calls[0][0][:4]
-    assert (target, base, pr, recording) == ("acme/sandbox", "main", True, "fetch_through")  # scripted default
-    assert calls[1][0][2] is False and calls[1][0][3] is None                                # live: the model
-
-
-def test_target_looks_for_the_breakout_more_than_once(monkeypatch):
-    """--n used to be ignored with --target, so it made exactly one attempt and
-    a single quiet trial ended the run with nothing fixed and no PR."""
-    import cli.main as m
-    calls = []
-    monkeypatch.setattr(m, "_pipeline", lambda *a, **kw: calls.append((a, kw)))
-
-    assert runner.invoke(app, ["drill", "--target", "acme/sandbox"]).exit_code == 0
-    assert calls[0][1]["attempts"] == 10, "the default attempt budget"
-
-    assert runner.invoke(app, ["drill", "--target", "acme/sandbox", "--n", "3"]).exit_code == 0
-    assert calls[1][1]["attempts"] == 3, "--n is the attempt budget with --target"
-
-
-def test_hunt_target_passes_its_own_attempt_budget(monkeypatch):
+def test_hunt_with_target_runs_the_full_loop(monkeypatch):
+    """--target lives on `hunt`, not `drill`: it stops at the first breakout and
+    acts on it, where drill measures a rate over every one of n trials."""
     import cli.main as m
     calls = []
     monkeypatch.setattr(m, "_pipeline", lambda *a, **kw: calls.append((a, kw)))
     assert runner.invoke(app, ["hunt", "--target", "acme/sandbox"]).exit_code == 0
-    assert calls[0][1]["attempts"] == 10
-    assert runner.invoke(app, ["hunt", "--target", "acme/sandbox", "-n", "4"]).exit_code == 0
-    assert calls[1][1]["attempts"] == 4
+    assert runner.invoke(
+        app, ["hunt", "--target", "acme/sandbox", "--mode", "scripted",
+              "--drill", "breakout", "--no-pr"]).exit_code == 0
+    target, base, pr = calls[0][0][:3]
+    assert (target, base, pr) == ("acme/sandbox", "main", True)
+    assert calls[0][0][3] is None, "live by default: no recording"
+    assert calls[1][0][2] is False and calls[1][0][3] == "breakout_a.json"
 
 
-def test_drill_with_target_rejects_an_unknown_recording(monkeypatch):
+def test_hunt_target_looks_for_the_breakout_more_than_once(monkeypatch):
+    """--target used to make exactly one attempt, so a single quiet trial ended
+    the run with nothing fixed and no PR."""
     import cli.main as m
-    monkeypatch.setattr(m, "_pipeline", lambda *a: pytest.fail("must not run"))
-    res = runner.invoke(app, ["drill", "--target", "acme/sandbox", "--recording", "nope"])
-    assert res.exit_code == 2 and "unknown recording" in res.output
+    calls = []
+    monkeypatch.setattr(m, "_pipeline", lambda *a, **kw: calls.append((a, kw)))
+
+    assert runner.invoke(app, ["hunt", "--target", "acme/sandbox"]).exit_code == 0
+    assert calls[0][1]["attempts"] == 10, "the default attempt budget"
+
+    assert runner.invoke(app, ["hunt", "--target", "acme/sandbox", "-n", "3"]).exit_code == 0
+    assert calls[1][1]["attempts"] == 3
+
+
+def test_drill_no_longer_takes_target(monkeypatch):
+    """Two commands that did the same thing is worse than one that does it."""
+    import cli.main as m
+    monkeypatch.setattr(m, "_pipeline", lambda *a, **kw: pytest.fail("drill must not run the loop"))
+    res = runner.invoke(app, ["drill", "--target", "acme/sandbox"])
+    assert res.exit_code == 2
+    assert "No such option" in res.output or "no such option" in res.output.lower()
+    # and the help points at the command that does
+    assert "ares hunt" in runner.invoke(app, ["drill", "--help"]).output
+
+
+def test_hunt_with_target_rejects_an_unknown_scripted_combination(monkeypatch):
+    import cli.main as m
+    monkeypatch.setattr(m, "_pipeline", lambda *a, **kw: pytest.fail("must not run"))
+    res = runner.invoke(
+        app, ["hunt", "--target", "acme/sandbox", "--mode", "scripted", "--drill", "propensity"])
+    assert res.exit_code == 2 and "no scripted recording" in res.output
 
 
 # ---- run_harness / lab_up: failures must say why ----

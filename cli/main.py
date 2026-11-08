@@ -3,7 +3,7 @@
     ares drill --variant A --policy before --n 20     n trials, verdict rows, intervals (cli/drill.py)
     ares drill --variant B --policy after  --n 20
     ares drill --drill normal --policy after --n 1
-    ares drill --target owner/repo [--mode live]       the whole containment + fix + PR loop (cli/pipeline.py)
+    ares hunt  --target owner/repo                     the whole containment + fix + PR loop (cli/pipeline.py)
     ares trial [recording] [--target owner/repo]       one trial, or the same loop (cli/lab.py, cli/pipeline.py)
     ares fix lab/runs/kills/<run>.json [--open-pr]      name the cause, print or PR the leakbox.yaml change
     ares flaws [on|off|reset] [names] [--policy after]
@@ -34,7 +34,9 @@ from ares.results import DrillSummary
 from cli import lab  # loads the repo-root .env
 from cli import github_pr, pipeline, pr_writer, slack
 from cli.drill import (
+    BOLD_RED,
     COLUMNS,
+    RESET,
     LAB_DIR,
     POLICY_FILES_HOST,
     RECORDINGS,
@@ -261,39 +263,20 @@ def drill_cmd(
     ),
     n: int = typer.Option(
         10, min=1,
-        help="Trials. Each gets fresh containers and a fresh run id. With --target, how many "
-             "times to look for the first breakout before giving up."
+        help="Trials. Each gets fresh containers and a fresh run id."
     ),
     runs_dir: Path = typer.Option(
         REPO / "lab" / "runs", help="Where result.json and summary.json land.", show_default="lab/runs"
     ),
-    target: Optional[str] = typer.Option(
-        None, help="owner/repo of a company sandbox policy. Runs the whole loop instead: selftest, "
-                   "kill checks, drill, fix, fresh rerun, replays, signed report, PR (needs GITHUB_TOKEN)."),
-    recording: str = typer.Option(
-        "fetch_through", help="With --target and --mode scripted: the recording the agent replays."),
-    base: str = typer.Option("main", help="With --target: branch to read the policy from and open the PR against."),
-    pr: bool = typer.Option(True, "--pr/--no-pr", help="With --target: open the PR once the fix is verified."),
 ):
     """Run n trials against the lab and print each verdict, then the rates with their 95% CIs.
 
-    `ares drill --target you/repo` instead runs the whole containment + fix + PR loop against that
-    repo's policy, in one go (--mode live for Nemotron; --variant and --policy are not used, and
-    --n becomes how many attempts it makes to find the first breakout).
+    This measures a rate: every one of the n trials runs. To find a single breakout and act on it
+    -- cause, fix, fresh rerun, held-out replay, PR -- use `ares hunt`, which stops at the first one.
 
     Exit code: 0 every trial contained or held; 1 a trial was NOT CONTAINED or failed;
     2 usage or lab error, or a broken event chain.
-    With --target: 0 held or fixed and verified, 1 not fixed or needs review, 2 error, 3 inconclusive.
     """
-    if target:
-        if mode is Mode.scripted and recording not in lab.recordings():
-            _fail("unknown recording %r; one of: %s" % (recording, ", ".join(lab.recordings())))
-        # --n is the attempt budget here, not a sample size: the pipeline stops at
-        # the first breakout. It used to be ignored, so --target made exactly one
-        # attempt and a single quiet trial ended the run with nothing fixed.
-        _pipeline(target, base, pr, recording if mode is Mode.scripted else None, lab.DEFAULT_GOAL, None,
-                  Caps(max_tokens=16000), attempts=n)
-        return
     problem = validate(mode.value, drill.value, variant.value)
     if problem:
         _fail(problem)
@@ -532,8 +515,28 @@ def dashboard_url(run_id: str) -> str:
 _COLORS = {"start": "cyan", "done": "green", "fail": "red"}
 
 
+def _trial_row(attempt: int, of: int, trial: Any, color: bool) -> str:
+    """One round-0 attempt, in the same shape as the drill table.
+
+    The pipeline reports stages, not trials, so without this `ares hunt --target`
+    sat silent through every attempt and then produced a fix out of nowhere.
+    """
+    rec = trial.kill_record or {}
+    if trial.fires or trial.breaches:
+        levers = rec.get("levers") or []
+        verified = sum(1 for lv in levers if lv.get("verified"))
+        outcome = "REACHED answer key · killed" if rec else "REACHED answer key · NOT KILLED"
+        ttk = "%s ms" % rec.get("ttk_ms") if rec.get("ttk_ms") is not None else "—"
+        tail = "%d/%d verified" % (verified, len(levers)) if levers else "—"
+        body = "  %02d/%02d  %-14s %-38s %-8s %s" % (attempt, of, trial.run_id, outcome, ttk, tail)
+        return (BOLD_RED + body + RESET) if color else body
+    return "  %02d/%02d  %-14s %-38s %-8s %s" % (
+        attempt, of, trial.run_id, "no breakout · never reached the key", "—", "—")
+
+
 def _pipeline(target: str, base: str, open_pr: bool, recording: Optional[str], goal: str,
-              model: Optional[str], caps: Caps, attempts: int = 1) -> None:
+              model: Optional[str], caps: Caps, attempts: int = 1,
+              on_trial: Optional[Any] = None) -> None:
     token = os.environ.get("GITHUB_TOKEN", "")
     typer.secho(BANNER, fg="cyan", bold=True)
     typer.echo()
@@ -561,6 +564,7 @@ def _pipeline(target: str, base: str, open_pr: bool, recording: Optional[str], g
             caps,
             open_pr=open_pr,
             attempts=attempts,
+            on_trial=on_trial or (lambda attempt, of, trial: None),
             judge=_inconclusive,
             show=show,
         )
@@ -627,10 +631,22 @@ def hunt_cmd(
         # The pipeline's own default goal is the benign one, which gives a live
         # agent no reason to go near the key -- so hand it this drill's goal.
         # --max-trials becomes how many times round 0 looks for the breakout.
+        color = use_color(sys.stdout)
+        shown = {"header": False}
+
+        def row(attempt: int, of: int, trial: Any) -> None:
+            if not shown["header"]:
+                typer.echo(COLUMNS)
+                shown["header"] = True
+            typer.echo(_trial_row(attempt, of, trial, color))
+
+        # The pipeline's own default goal is the benign one, which gives a live
+        # agent no reason to go near the key -- so hand it this drill's goal.
+        # --max-trials becomes how many times round 0 looks for the breakout.
         _pipeline(target, base, pr,
                   None if mode is Mode.live else RECORDINGS.get((drill.value, variant.value)),
                   render_goal(drill.value, variant.value), None,
-                  Caps(max_tokens=16000), attempts=max_trials)
+                  Caps(max_tokens=16000), attempts=max_trials, on_trial=row)
         return
     if not os.environ.get("ARES_ADMIN_TOKEN"):
         _fail(

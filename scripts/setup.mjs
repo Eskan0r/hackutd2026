@@ -96,7 +96,7 @@ function setupEnv() {
   }
   if (!("ARES_TARGET" in readEnvFile(ENV))) {
     appendFileSync(ENV, `${text.endsWith("\n") ? "" : "\n"}`
-      + "# owner/repo that `npm run dev` drills (same as ares drill --target)\nARES_TARGET=\n");
+      + "# owner/repo that `npm run dev` drills (same as ares hunt --target)\nARES_TARGET=\n");
   }
   let ready = true;
   const now = readEnvFile(ENV);
@@ -138,5 +138,5 @@ console.log(`  1. Keys in .env (no quotes, no spaces around =):
   3. Dashboard + drill, one command:
        ${cyan("npm run dev")}
      or just the drill, in this terminal:
-       ${cyan(`${ares} drill --target <owner>/<repo>`)}               recorded agent, no model calls
-       ${cyan(`${ares} drill --target <owner>/<repo> --mode live`)}   live Nemotron`);
+       ${cyan(`${ares} hunt --target <owner>/<repo> --mode scripted`)}   recorded agent, no model calls
+       ${cyan(`${ares} hunt --target <owner>/<repo>`)}                  live Nemotron (the default)`);
