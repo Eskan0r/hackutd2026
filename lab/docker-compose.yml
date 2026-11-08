@@ -149,6 +149,6 @@ services:
     security_opt: ["no-new-privileges:true"]
     pids_limit: 256
     mem_limit: 512m
-    # gVisor per §7; Docker Desktop has no runsc, so default runc with caps dropped
-    # is the documented fallback (§12). Uncomment on the Linux VM:
-    # runtime: runsc
+    # gVisor per §7. Docker Desktop has no runsc, so the default is plain runc with
+    # caps dropped (§12). On the Linux VM set ARES_SANDBOX_RUNTIME=runsc in <repo>/.env.
+    runtime: ${ARES_SANDBOX_RUNTIME:-runc}
