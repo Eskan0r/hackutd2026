@@ -32,7 +32,7 @@ WIDTH = 66
 BANNER = (
     "   ▄▀█ █▀█ █▀▀ █▀\n"
     "   █▀█ █▀▄ ██▄ ▄█\n"
-    "   your sandbox defender"
+    "   AI Sandbox Defender."
 )
 
 # What each recording in agent/recorded/ does, in a few words.
@@ -193,9 +193,12 @@ def drill_cmd(
     o = trial.outcome
     typer.echo()
     typer.echo(_rule("AGENT"))
+    stopped = o.get("stop_reason")
+    stopped_str = ("killed by the defender mid-run (SIGKILL)"
+                   if stopped == "killed_by_defender" else stopped)
     typer.echo("  steps %s   ·   tool calls %s   ·   stopped: %s%s" % (
         o.get("steps") if o.get("steps") is not None else "-",
-        len(o.get("tool_calls", [])), o.get("stop_reason"),
+        len(o.get("tool_calls", [])), stopped_str,
         "   ·   reported blocked" if o.get("reported_blocked") else ""))
     for err in o.get("errors", []):
         typer.secho("  ! agent error: %s" % err, fg="yellow")

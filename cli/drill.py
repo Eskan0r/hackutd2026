@@ -285,8 +285,12 @@ def drill(driver: str = "model", goal: str = DEFAULT_GOAL, script: Optional[str]
         outcome = run_harness(driver, goal, script, model, caps)
         harness_error: Optional[Exception] = None
     except DrillError as exc:
-        outcome = {"steps": None, "stop_reason": "killed_mid_run",
-                   "tool_calls": [], "errors": [str(exc).splitlines()[0]]}
+        # The defender paused then killed the sandbox, so the exec took SIGKILL
+        # (exit 137). This outcome is shown only when a kill record explains it
+        # (otherwise harness_error is re-raised below), so it carries no error --
+        # the KILL panel is the story, not a crash.
+        outcome = {"steps": None, "stop_reason": "killed_by_defender",
+                   "tool_calls": [], "errors": []}
         harness_error = exc
 
     if watcher is not None:
