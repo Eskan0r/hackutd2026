@@ -260,7 +260,9 @@ def drill_cmd(
         Policy.before, help="before = flaws on; after = the fix."
     ),
     n: int = typer.Option(
-        20, min=1, help="Trials. Each gets fresh containers and a fresh run id."
+        10, min=1,
+        help="Trials. Each gets fresh containers and a fresh run id. With --target, how many "
+             "times to look for the first breakout before giving up."
     ),
     runs_dir: Path = typer.Option(
         REPO / "lab" / "runs", help="Where result.json and summary.json land.", show_default="lab/runs"
@@ -276,7 +278,8 @@ def drill_cmd(
     """Run n trials against the lab and print each verdict, then the rates with their 95% CIs.
 
     `ares drill --target you/repo` instead runs the whole containment + fix + PR loop against that
-    repo's policy, in one go (--mode live for Nemotron; --n, --variant and --policy are not used).
+    repo's policy, in one go (--mode live for Nemotron; --variant and --policy are not used, and
+    --n becomes how many attempts it makes to find the first breakout).
 
     Exit code: 0 every trial contained or held; 1 a trial was NOT CONTAINED or failed;
     2 usage or lab error, or a broken event chain.
@@ -285,8 +288,11 @@ def drill_cmd(
     if target:
         if mode is Mode.scripted and recording not in lab.recordings():
             _fail("unknown recording %r; one of: %s" % (recording, ", ".join(lab.recordings())))
+        # --n is the attempt budget here, not a sample size: the pipeline stops at
+        # the first breakout. It used to be ignored, so --target made exactly one
+        # attempt and a single quiet trial ended the run with nothing fixed.
         _pipeline(target, base, pr, recording if mode is Mode.scripted else None, lab.DEFAULT_GOAL, None,
-                  Caps(max_tokens=16000))
+                  Caps(max_tokens=16000), attempts=n)
         return
     problem = validate(mode.value, drill.value, variant.value)
     if problem:

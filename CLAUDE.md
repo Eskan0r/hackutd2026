@@ -128,7 +128,10 @@ These are the point of the project. Code that violates one is wrong even if it p
 - `--driver scripted` replays recorded actions and is the deterministic demo backup — keep it working.
 - Giving the lab gateway the key needs `docker compose up -d gateway` **from a shell where
   `NVIDIA_API_KEY` is exported**; compose reads it at container-create time.
-- LLM request budget is tight (~40 req/min free tier; one n=20 drill ≈ 240 calls ≈ 6 min). Run
+- LLM request budget is tight (~40 req/min free tier; an n=20 drill ≈ 240 calls ≈ 6 min, which is
+  why `--n` defaults to 10). A 10/10 reach gives a 95% lower bound of 0.69 against 0.83 at n=20, so
+  pass `--n 20` for a number worth quoting. With `--target`, `--n` is the attempt budget for finding
+  the first breakout, not a sample size. Run
   batches unattended, never during a judge slot.
 - Free model endpoints log prompts: synthetic data only.
 - **A flat event directory accumulates sessions that reuse one `run_id`.** `lab/runs/` holds
