@@ -306,6 +306,8 @@ def drill_cmd(
     typer.echo(
         header_line(drill_id, mode.value, drill.value, variant.value, policy.value, n)
     )
+    if mode is Mode.live:
+        typer.echo("agent: %s" % lab.agent_model())
     typer.echo(COLUMNS)
 
     compose_lab = ComposeLab(REPO)
@@ -418,6 +420,7 @@ def _pipeline(target: str, base: str, open_pr: bool, recording: Optional[str], g
             typer.secho("  ✗ %s" % p, fg="red")
         raise typer.Exit(EXIT_ERROR)
     typer.echo(_rule("DRILL + FIX LOOP · %s@%s" % (target, base)))
+    typer.echo("  agent: %s" % ("recorded (%s)" % recording if recording else "live %s" % lab.agent_model(model)))
 
     def show(line: Dict[str, Any]) -> None:
         mark, text = pipeline.console_line(line)  # the same text the PR's console section shows
@@ -546,7 +549,7 @@ def trial_cmd(
         title = "Recorded agent: %s" % recording
         detail = SCENARIOS.get(recording, "replays agent/recorded/%s.json" % recording)
     else:
-        title = "Live agent: %s" % (model or "Nemotron")
+        title = "Live agent: %s" % lab.agent_model(model)
         detail = "goal: %s" % goal
 
     typer.secho(BANNER, fg="cyan", bold=True)

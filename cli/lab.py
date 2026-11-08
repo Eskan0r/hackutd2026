@@ -81,6 +81,15 @@ def admin_url() -> str:
     return os.environ.get("ARES_ADMIN_URL", "http://127.0.0.1:8081")
 
 
+# Same default as agent/harness.py and lab/docker-compose.yml; ARES_MODEL in .env overrides all three.
+DEFAULT_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
+
+
+def agent_model(model: Optional[str] = None) -> str:
+    """The exact model id a live agent runs on: --model, else ARES_MODEL, else the default."""
+    return model or os.environ.get("ARES_MODEL") or DEFAULT_MODEL
+
+
 def admin_token() -> str:
     return os.environ.get("ARES_ADMIN_TOKEN", "ares-lab-admin")
 

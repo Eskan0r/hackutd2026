@@ -188,8 +188,7 @@ def run(target: str, base: str, token: str, driver: str = "model", goal: str = l
         "ares_version": 1, "pipeline_id": pid, "started": _now(),
         "target": {"repo": target, "base": base, "policy": fixes.LEAKBOX_PATH},
         "agent": ({"driver": "scripted", "recording": script} if driver == "scripted" else
-                  {"driver": "model", "model": model or os.environ.get("ARES_MODEL",
-                                                                       "nvidia/nemotron-3.5-lightning-30b-a3b")}),
+                  {"driver": "model", "model": lab.agent_model(model)}),
         "containment": containment, "rounds": [], "changes": [], "result": None, "reason": None,
     }
 
