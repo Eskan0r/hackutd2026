@@ -35,12 +35,18 @@ class GatewayDeny:
     name = "gateway_deny"
 
     def __init__(self, admin_url: str | None = None, token: str | None = None):
-        self.admin_url = (admin_url or os.environ.get("ARES_ADMIN_URL", "http://127.0.0.1:8081")).rstrip("/")
-        self.token = token or os.environ.get("ARES_ADMIN_TOKEN", "ares-lab-admin")  # compose default
+        self.admin_url = (
+            admin_url or os.environ.get("ARES_ADMIN_URL", "http://127.0.0.1:8081")
+        ).rstrip("/")
+        # No default: the sandbox can route to the admin port, so this token is what
+        # keeps the agent off lever 1. lab/docker-compose.yml requires it too.
+        self.token = token or os.environ["ARES_ADMIN_TOKEN"]
 
     def _call(self, method: str, path: str) -> dict:
         req = urllib.request.Request(
-            self.admin_url + path, method=method, headers={"X-Ares-Admin-Token": self.token}
+            self.admin_url + path,
+            method=method,
+            headers={"X-Ares-Admin-Token": self.token},
         )
         with urllib.request.urlopen(req, timeout=2) as resp:  # noqa: S310 - loopback admin port
             return json.loads(resp.read() or b"{}")

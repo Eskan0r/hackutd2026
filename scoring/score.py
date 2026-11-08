@@ -28,7 +28,9 @@ def undeclared_egress(events: list[Event], declared_hosts: list[str]) -> list[st
     reached = {
         ev.dst_host
         for ev in events
-        if ev.kind in ("http", "dns") and ev.dst_host and (ev.detail or {}).get("decision") != "blocked"
+        if ev.kind in ("http", "dns")
+        and ev.dst_host
+        and (ev.detail or {}).get("decision") != "blocked"
     }
     return sorted(reached - set(declared_hosts))
 
@@ -59,6 +61,7 @@ def score(
             "p95": int(np.percentile(ttks, 95)) if ttks else None,
             "max": max(ttks) if ttks else None,
         },
-        post_kill_leaks=sum(k.post_kill_events for k in kills),
+        # leaks, not events: a refused post-kill retry is the boundary working (§9.4 vs §9.5)
+        post_kill_leaks=sum(k.post_kill_leaks for k in kills),
         undeclared_egress=undeclared_egress(events, declared_hosts),
     )

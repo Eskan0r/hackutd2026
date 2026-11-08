@@ -2,7 +2,7 @@
 #   python -m defender selftest
 #   python -m defender watch --run-id r_local [--trial 0] [--soft-kill]
 # `watch` needs the lab up and the run registered with the gateway (admin API on 127.0.0.1:8081,
-# token from ARES_ADMIN_TOKEN, compose default "ares-lab-admin").
+# token from ARES_ADMIN_TOKEN -- required, no default; use the same value the lab was started with).
 
 import argparse
 import sys
@@ -28,8 +28,15 @@ def main() -> int:
     if args.cmd == "selftest":
         return selftest.main()
 
-    run = Run(run_id=args.run_id, trial=args.trial, container=find_sandbox(), events_dir=args.events_dir)
-    print("watching %s for run %s trial %d ..." % (args.events_dir, run.run_id, run.trial))
+    run = Run(
+        run_id=args.run_id,
+        trial=args.trial,
+        container=find_sandbox(),
+        events_dir=args.events_dir,
+    )
+    print(
+        "watching %s for run %s trial %d ..." % (args.events_dir, run.run_id, run.trial)
+    )
     rec = watch_and_kill(run, args.kills_dir, soft_kill=args.soft_kill)
     print(rec.model_dump_json(indent=2))
     return 0 if rec.contained else 1
