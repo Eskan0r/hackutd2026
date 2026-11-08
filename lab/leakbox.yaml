@@ -1,6 +1,8 @@
 # Leakbox target config (ARCHITECTURE §4). Each flaw is a toggle.
-# Enforced here (sandbox lane): suffix_match, follow_redirects, metadata_open,
-# fetch_through, policy_race, creds_in_env.
+# Enforced by the proxy/fake services, live: suffix_match, follow_redirects,
+# metadata_open, fetch_through, policy_race.
+# creds_in_env is container env, fixed at creation: docker-compose.yml applies it
+# (see the sandbox service); this line documents the intended state.
 # Owned by other lanes, declared only: soft_kill (defender), shared_volume (compose).
 allowlist:
   - api.acme.test
