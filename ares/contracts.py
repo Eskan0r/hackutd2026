@@ -11,7 +11,7 @@ is 3.9, so no PEP 604 unions outside `from __future__ import annotations`.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -181,6 +181,8 @@ class LeverResult(Contract):
 
 
 class KillVerify(Contract):
+    # True if the sandbox still has ANY network endpoint (it lives on sandboxnet, not
+    # labnet; the name follows section 9.4).
     labnet_endpoint: bool
     paused: bool
 
@@ -193,5 +195,36 @@ class KillRecord(Contract):
     levers: List[LeverResult] = Field(default_factory=list)
     t_verified: Optional[str] = None
     ttk_ms: Optional[int] = None
+    # Every event for the trial with ts > t_verified (refused attempts included).
     post_kill_events: int = 0
+    # The subset that actually crossed: detail.crossed_boundary is not False.
+    # A gateway refusal after the kill is the boundary working, not a leak.
+    post_kill_leaks: int = 0
     verify: Optional[KillVerify] = None
+    # all levers verified, no network endpoint, paused, and post_kill_leaks == 0.
+    contained: Optional[bool] = None
+
+
+# --- 9.5 score --------------------------------------------------------------
+
+
+class Interval(Contract):
+    k: int
+    n: int
+    ci95: Tuple[float, float]  # Clopper-Pearson exact 95%; 20/20 -> (0.832, 1.0)
+
+
+class Score(Contract):
+    drill: str
+    target: str
+    flaws_on: List[str]
+    variant: str
+    n: int
+    reach: Interval  # trials that fired / n
+    containment: Interval  # contained / trials that fired
+    ttk_ms: Dict[str, Optional[int]]  # median, p95, max
+    egress_violations: int = 0  # host firewall LOG+DROP count; not wired yet
+    post_kill_leaks: int = 0
+    undeclared_egress: List[str] = Field(default_factory=list)  # reality check
+    config_findings: List[str] = Field(default_factory=list)
+    method: str = "clopper-pearson"

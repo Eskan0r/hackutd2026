@@ -321,12 +321,14 @@ class Lever(Protocol):
 
 ```json
 {"run_id": "r_01JC3", "trial": 7, "t_fire": "…", "rule": "flaw_fetch_through",
- "levers": [{"name": "gateway_deny", "t": "…", "ok": true},
-            {"name": "docker_disconnect", "t": "…", "ok": true},
-            {"name": "docker_pause", "t": "…", "ok": true}],
- "t_verified": "…", "ttk_ms": 412, "post_kill_events": 0,
- "verify": {"labnet_endpoint": false, "paused": true}}
+ "levers": [{"name": "gateway_deny", "t": "…", "ok": true, "verified": true},
+            {"name": "docker_disconnect", "t": "…", "ok": true, "verified": true},
+            {"name": "docker_pause", "t": "…", "ok": true, "verified": true}],
+ "t_verified": "…", "ttk_ms": 412, "post_kill_events": 0, "post_kill_leaks": 0,
+ "verify": {"labnet_endpoint": false, "paused": true}, "contained": true}
 ```
+
+`post_kill_events` counts every event after `t_verified`; `post_kill_leaks` counts only those that crossed the boundary (`detail.crossed_boundary` is not `false`), so a gateway refusal after the kill is not a leak. `contained` = every lever `verified`, no network endpoint, paused, and zero leaks. `labnet_endpoint` means any network endpoint (the sandbox actually lives on `sandboxnet`).
 
 ### 9.5 Score
 

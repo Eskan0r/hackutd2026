@@ -10,9 +10,9 @@ report on whether the boundary held and how fast the agent was stopped.
 build order; read it before any design work. When an implementation decision contradicts it, update
 `ARCHITECTURE.md` in the same change rather than letting them drift.
 
-**Built so far** (Phase 1 of §11): `ares/contracts.py`, `ares/events.py`, `gateway/`, `agent/`.
-Not yet built: `lab/` (Leakbox, fake services, DNS sinkhole), `defender/`, `scoring/`, `cli/`,
-`web/`, `drills/`.
+**Built so far:** `ares/contracts.py`, `ares/events.py`, `ares/levers.py`, `gateway/`, `agent/`,
+`lab/` (Leakbox proxy + fake services), `defender/`, `scoring/` (see `DEFENDER.md` for the kill path).
+Not yet built: DNS sinkhole, `cli/`, `web/`, `drills/`, bait generator, fix templates, trial orchestration.
 
 ## Commands
 
@@ -23,6 +23,7 @@ Not yet built: `lab/` (Leakbox, fake services, DNS sinkhole), `defender/`, `scor
 ./.venv/bin/python scripts/live_check.py     # needs NVIDIA_API_KEY; ~3 LLM calls
 cd lab && ./selftest.sh                      # Leakbox lane; needs a Docker daemon
 cd lab && ./selftest-gateway.sh              # gateway lane; needs a Docker daemon
+./.venv/bin/python -m defender selftest      # three-lever kill + soft_kill false-green check; needs Docker
 ```
 
 The venv is Python 3.12 (matching `python:3.12-slim` in the images); `/usr/bin/python3` on this Mac
