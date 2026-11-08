@@ -64,6 +64,21 @@ app = typer.Typer(
 )
 
 EXIT_OK, EXIT_BAD = EXIT_HELD, EXIT_BREAKOUT
+
+
+def _utf8_streams() -> None:
+    """Windows writes a piped or redirected stdout in cp1252, which cannot encode the banner
+    or the box-drawing verdicts, so `ares drill | tee log` died on its first line. scripts/ares.mjs
+    sets PYTHONIOENCODING for the same reason; this covers the bare `ares` console script."""
+    for stream in (sys.stdout, sys.stderr):
+        if (getattr(stream, "encoding", "") or "").lower().replace("-", "") != "utf8":
+            try:
+                stream.reconfigure(encoding="utf-8")
+            except (AttributeError, ValueError):  # replaced stream (pytest capture) or detached
+                pass
+
+
+_utf8_streams()
 WIDTH = 78
 BANNER = "   ▄▀█ █▀█ █▀▀ █▀\n   █▀█ █▀▄ ██▄ ▄█\n   your sandbox defender"
 
