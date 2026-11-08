@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from ares.results import DrillSummary, TrialResult  # noqa: F401 (DrillSummary used later)
+from ares.results import TrialResult
 
 
 def _trial(**over):
@@ -290,3 +290,49 @@ def test_run_trial_drives_the_lab_in_order_and_decides_from_the_kill(tmp_path):
     fresh.mkdir()
     held = run_trial(StubLab(fresh, [ev("watch", decision="blocked")]), SPEC)
     assert held.verdict == "held" and held.forbidden_access_blocked is True
+
+
+# --- ComposeLab: the real driver's pure builders (spec D5) --------------------
+
+from cli.drill import ComposeLab  # noqa: E402
+
+
+def test_compose_lab_builds_the_documented_commands(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARES_ADMIN_TOKEN", "t0k3n")
+    monkeypatch.delenv("ARES_ADMIN_URL", raising=False)
+    lab = ComposeLab(tmp_path, python="/venv/python")
+    assert lab.compose("up", "-d", "--wait", "gateway") == [
+        "docker",
+        "compose",
+        "up",
+        "-d",
+        "--wait",
+        "gateway",
+    ]
+    assert lab.defender_argv(SPEC) == [
+        "/venv/python",
+        "-m",
+        "defender",
+        "watch",
+        "--run-id",
+        "d_x-00",
+        "--trial",
+        "0",
+        "--events-dir",
+        "lab/runs",
+        "--kills-dir",
+        "lab/runs/kills",
+    ]
+    assert lab.registration(SPEC, "ares-dummy-d_x-00") == {
+        "run_id": "d_x-00",
+        "trial": 0,
+        "variant": "B",
+        "dummy_key": "ares-dummy-d_x-00",
+    }
+    assert lab.admin_url == "http://127.0.0.1:8081"
+
+
+def test_compose_lab_refuses_to_start_without_the_admin_token(tmp_path, monkeypatch):
+    monkeypatch.delenv("ARES_ADMIN_TOKEN", raising=False)
+    with pytest.raises(KeyError):
+        ComposeLab(tmp_path)

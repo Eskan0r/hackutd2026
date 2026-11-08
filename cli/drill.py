@@ -11,9 +11,16 @@ of a run is not evidence (ARCHITECTURE.md section 3).
 from __future__ import annotations
 
 import json
+import os
+import select
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Protocol, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 from pydantic import ValidationError
 
@@ -239,3 +246,187 @@ def build_result(
         kill_record=kill_path,
         harness_rc=harness_rc,
     )
+
+
+# --- the real lab -----------------------------------------------------------
+
+
+class ComposeLab:
+    """Drives the compose lab and the defender exactly as the documented hand
+    procedure does (drills/README.md, DEFENDER.md): recreate fake/proxy/sandbox per
+    trial, `python -m defender watch` as a subprocess, `compose exec` the harness.
+    Nothing in the kill path is reimplemented here.
+
+    The pure builders (compose, defender_argv, registration) are unit-tested; the
+    subprocess methods are the operator check with Docker up.
+    """
+
+    WATCH_READY_S = 15.0
+
+    def __init__(
+        self,
+        repo: Path,
+        python: str = sys.executable,
+        admin_url: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> None:
+        self.repo = Path(repo)
+        self.lab_dir = self.repo / "lab"
+        self.runs_dir = self.lab_dir / "runs"
+        self.python = python
+        self.admin_url = (
+            admin_url or os.environ.get("ARES_ADMIN_URL", "http://127.0.0.1:8081")
+        ).rstrip("/")
+        # No default, same as the gateway and GatewayDeny: the token is the only
+        # thing between the sandbox and lever 1.
+        self.token = token or os.environ["ARES_ADMIN_TOKEN"]
+        self._watch: Optional[subprocess.Popen] = None
+        self._watch_log: Optional[Path] = None
+
+    # -- pure builders ------------------------------------------------------
+
+    def compose(self, *args: str) -> List[str]:
+        return ["docker", "compose", *args]
+
+    def defender_argv(self, spec: TrialSpec) -> List[str]:
+        return [
+            self.python,
+            "-m",
+            "defender",
+            "watch",
+            "--run-id",
+            spec.run_id,
+            "--trial",
+            str(spec.trial),
+            "--events-dir",
+            "lab/runs",
+            "--kills-dir",
+            "lab/runs/kills",
+        ]
+
+    def registration(self, spec: TrialSpec, dummy_key: str) -> Dict[str, Any]:
+        return {
+            "run_id": spec.run_id,
+            "trial": spec.trial,
+            "variant": spec.variant,
+            "dummy_key": dummy_key,
+        }
+
+    def kill_path(self, spec: TrialSpec) -> str:
+        return "lab/runs/kills/%s-%d.json" % (spec.run_id, spec.trial)
+
+    # -- subprocess glue ----------------------------------------------------
+
+    def _compose(self, *args: str, env: Optional[Dict[str, str]] = None, timeout: float = 300) -> None:
+        proc = subprocess.run(
+            self.compose(*args),
+            cwd=str(self.lab_dir),
+            env={**os.environ, **(env or {})},
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                "docker compose %s failed (%d):\n%s" % (" ".join(args), proc.returncode, proc.stderr[-2000:])
+            )
+
+    def prepare(self) -> None:
+        # Recordings are baked into the sandbox image; lever 1 lives in the gateway,
+        # which the per-trial recreate never touches.
+        self._compose("build", "sandbox", timeout=900)
+        self._compose("up", "-d", "--wait", "gateway")
+
+    def register_run(self, spec: TrialSpec, dummy_key: str) -> None:
+        body = json.dumps(self.registration(spec, dummy_key)).encode()
+        req = urllib.request.Request(
+            self.admin_url + "/admin/runs",
+            data=body,
+            method="POST",
+            headers={"X-Ares-Admin-Token": self.token, "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5):  # noqa: S310 - loopback admin port
+                return
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode(errors="replace")
+            if exc.code == 409:
+                detail = "run id already registered with the gateway (reused id?): " + detail
+            raise RuntimeError("gateway refused registration of %s: %d %s" % (spec.run_id, exc.code, detail))
+
+    def up(self, spec: TrialSpec, env: Dict[str, str]) -> None:
+        self._compose("up", "-d", "--force-recreate", "--wait", "fake", "proxy", "sandbox", env=env)
+
+    def start_watch(self, spec: TrialSpec) -> None:
+        # stderr goes to a file, not a pipe: the defender reports every non-event
+        # line it skips, and a full pipe would stall it mid-kill.
+        run_dir = self.runs_dir / spec.run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        self._watch_log = run_dir / "defender.log"
+        log = open(self._watch_log, "w")
+        self._watch = subprocess.Popen(
+            self.defender_argv(spec),
+            cwd=str(self.repo),
+            stdout=subprocess.PIPE,
+            stderr=log,
+            text=True,
+        )
+        log.close()
+        deadline = time.monotonic() + self.WATCH_READY_S
+        assert self._watch.stdout is not None
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([self._watch.stdout], [], [], 0.2)
+            if ready:
+                line = self._watch.stdout.readline()
+                if line.startswith("watching"):
+                    return
+                if line == "":  # EOF: the defender exited before it was watching
+                    break
+            elif self._watch.poll() is not None:
+                break
+        rc = self._watch.poll()
+        raise RuntimeError(
+            "defender did not start watching (rc=%s). Its log:\n%s"
+            % (rc, self._watch_log.read_text()[-2000:])
+        )
+
+    def exec_harness(self, argv: List[str], timeout_s: float) -> int:
+        try:
+            proc = subprocess.run(
+                self.compose("exec", "-T", "sandbox", *argv),
+                cwd=str(self.lab_dir),
+                env=dict(os.environ),
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+            )
+        except subprocess.TimeoutExpired:
+            return 124
+        # Operator-facing only: the harness's own account is never evidence (D5).
+        if self._watch_log is not None:
+            (self._watch_log.parent / "harness.out").write_text(proc.stdout + proc.stderr)
+        return proc.returncode
+
+    def finish_watch(self, spec: TrialSpec, grace_s: float) -> Tuple[Optional[KillRecord], Optional[str]]:
+        assert self._watch is not None
+        rel = self.kill_path(spec)
+        path = self.repo / rel
+        deadline = time.monotonic() + grace_s
+        while time.monotonic() < deadline and not path.exists() and self._watch.poll() is None:
+            time.sleep(0.1)
+        if path.exists():
+            try:
+                self._watch.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self._watch.terminate()
+            return KillRecord.model_validate_json(path.read_text()), rel
+        if self._watch.poll() is None:
+            self._watch.terminate()
+            try:
+                self._watch.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._watch.kill()
+        return None, None
+
+    def events_for(self, spec: TrialSpec) -> List[Event]:
+        return read_trial_events(self.runs_dir, spec.run_id, spec.trial)
