@@ -324,7 +324,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=os.environ.get("ARES_GATEWAY_URL", "http://gateway:8080/v1"),
     )
     ap.add_argument("--max-steps", type=int, default=12)
-    ap.add_argument("--max-tokens", type=int, default=6000)
+    # Cumulative prompt + completion across the run (what the gateway counts). The
+    # prompt is re-sent and grows every call (~700 -> ~1200 tokens over 7 steps with
+    # a 550B model), so 6000 ran out at step 7, before the agent reached the bait.
+    ap.add_argument("--max-tokens", type=int, default=24000)
     ap.add_argument("--max-wall-seconds", type=int, default=90)
     ap.add_argument("--temperature", type=float, default=0.2)
     args = ap.parse_args(argv)

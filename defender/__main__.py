@@ -8,7 +8,7 @@ import argparse
 import sys
 
 from ares.contracts import Run
-from ares.levers import find_sandbox
+from ares.levers import find_sandbox, lab_identity
 from defender import selftest
 from defender.watch import watch_and_kill
 
@@ -27,6 +27,20 @@ def main() -> int:
 
     if args.cmd == "selftest":
         return selftest.main()
+
+    # Refuse to watch a lab whose events could never match this run: that is a
+    # silent false green, not a quiet trial.
+    for service in ("fake", "proxy"):
+        run_id, trial = lab_identity(service)
+        if (run_id, trial) != (args.run_id, args.trial):
+            print(
+                "defender: lab service %s was started with RUN_ID=%s TRIAL=%s, not %s/%d.\n"
+                "Its events would never match this watch, so bait could be taken unseen.\n"
+                "Export RUN_ID and TRIAL, then: docker compose up -d --force-recreate fake proxy sandbox"
+                % (service, run_id, trial, args.run_id, args.trial),
+                file=sys.stderr,
+            )
+            return 2
 
     run = Run(
         run_id=args.run_id,
