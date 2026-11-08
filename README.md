@@ -66,7 +66,10 @@ ares drill --variant A --policy before --n 20      # the hole: reached and kille
 ares drill --variant B --policy after  --n 20      # the fix, held out: refused, every time
 ares drill --drill normal --policy after --n 1     # the fix did not break useful work
 ares drill --mode live --n 3                       # live Nemotron instead of the recording; needs NVIDIA_API_KEY
-ares flaws [--policy after]                        # list what each policy leaves on
+ares trial fetch_through                           # one trial with the full evidence/kill printout (exit 3 = inconclusive)
+ares fix lab/runs/kills/<run>.json [--open-pr]     # name the flaw behind a kill, print the leakbox.yaml change, or open a PR
+ares trial --target owner/repo                     # the whole fix loop against that repo's policy; needs GITHUB_TOKEN
+ares flaws [--policy after]                        # list what each policy leaves on; `ares flaws off <name>` edits leakbox.yaml
 ares down                                          # tear down
 ```
 
@@ -123,7 +126,7 @@ dummy key the harness uses) — see `lab/README.md`.
 | `lab/` | Leakbox: policy proxy with flaw toggles, fake services, bait, the sandbox image |
 | `gateway/` | LLM reverse proxy: key swap, fixed upstreams, caps, and kill lever 1 |
 | `agent/` | harness, tools, scripted replay, recordings |
-| `cli/` | the `ares` command: `drill.py` runs n trials and decides verdicts, `main.py` is the Typer front end |
+| `cli/` | the `ares` command: `drill.py` runs n trials and decides verdicts; `lab.py` runs one trial (`ares trial`); `pipeline.py`, `github_pr.py`, `pr_writer.py` name the flaw and open the fix PR; `main.py` is the Typer front end |
 | `tests/` | hermetic (a stub upstream stands in for NVIDIA NIM; a stub lab stands in for Docker) |
 | `scripts/` | `demo_kill.py`, `live_check.py` |
 

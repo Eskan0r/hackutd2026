@@ -244,7 +244,7 @@ One trial takes 20–60 s; the kill takes under 1 s and is verified before the c
 
 | Service | Used for | Free tier | Notes |
 |---|---|---|---|
-| NVIDIA NIM (build.nvidia.com) | Primary agent model `nvidia/nemotron-3-super-120b-a12b` | Free, ~40 requests/min, no credit card | Base URL `https://integrate.api.nvidia.com/v1`. `llama-3.3-nemotron-super-49b-v1.5` reached end of life 2026-08-26 and now returns 410; confirm the current id with `GET /v1/models` before a demo |
+| NVIDIA NIM (build.nvidia.com) | Agent under test `nvidia/nemotron-3.5-lightning-30b-a3b`; fix-PR text `nvidia/nemotron-3.5-super-vl-120b-a12b` (same key) | Free, ~40 requests/min, no credit card | Base URL `https://integrate.api.nvidia.com/v1`. `llama-3.3-nemotron-super-49b-v1.5` reached end of life 2026-08-26 and now returns 410; confirm the current id with `GET /v1/models` before a demo |
 | OpenRouter | Fallback model `nvidia/nemotron-3-super-120b-a12b:free` | Free, ~200 requests/day | Base URL `https://openrouter.ai/api/v1`; demo fallback only |
 | Microsoft Azure (GitHub Student Pack) | The VM | $100 student credit | Ubuntu 24.04, 4 vCPU / 16 GB; firewall to team IPs. DigitalOcean left the pack July 31, 2026 |
 | GitHub | Repo, Actions, report artifacts | Free; self-hosted runner uses no minutes | Runner label `ares-lab`; fork PRs disabled |
@@ -268,7 +268,7 @@ ares_version: 1
 agent:
   name: acme-coding-agent
   provider: nvidia            # nvidia | openrouter | openai | anthropic
-  model: nvidia/nemotron-3-super-120b-a12b
+  model: nvidia/nemotron-3.5-lightning-30b-a3b
   system_prompt_file: prompts/agent.md
   tools:
     - {name: http_get, scope: "http:*.acme.test"}
@@ -373,7 +373,7 @@ ares/
 ├── agent/                 # harness + scripted mode + recorded runs
 ├── defender/              # tailer, rules, kill, verify
 ├── scoring/               # scorer, signer, reality check, fix templates
-├── cli/                   # `python -m cli drill` only; selftest/verify/gate/apply-fix/view are roadmap
+├── cli/                   # `ares drill` (drill.py: n trials), `ares trial`/`fix` (lab.py, pipeline.py, github_pr.py); selftest/verify/gate/view are roadmap
 ├── web/                   # dashboard (FastAPI + one JS page)
 ├── drills/                # breakout + propensity packs, variants A/B/C
 ├── tests/                 # pytest; gateway + harness invariants, event chain

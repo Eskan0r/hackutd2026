@@ -1,6 +1,9 @@
-"""Shared test doubles. No Docker anywhere in the suite."""
+"""Shared test doubles. No Docker anywhere in the suite. Importing cli.lab loads the repo-root
+.env, so real keys are cleared before every test; tests that need one set a fake with monkeypatch."""
 
 from __future__ import annotations
+
+import pytest
 
 from ares.events import EventWriter, verify_chain
 from cli.drill import read_trial_events
@@ -50,3 +53,9 @@ class StubLab:
         for path in sorted(self.events_dir.glob("*.jsonl")):
             problems += verify_chain(str(path))
         return problems
+
+
+@pytest.fixture(autouse=True)
+def _no_real_keys(monkeypatch):
+    for name in ("NVIDIA_API_KEY", "OPENROUTER_API_KEY", "GITHUB_TOKEN"):
+        monkeypatch.delenv(name, raising=False)

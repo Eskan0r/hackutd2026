@@ -11,11 +11,13 @@ build order; read it before any design work. When an implementation decision con
 `ARCHITECTURE.md` in the same change rather than letting them drift.
 
 **Built so far:** `ares/contracts.py`, `ares/events.py`, `ares/levers.py`, `gateway/`, `agent/`,
-`lab/` (Leakbox proxy + fake services), `defender/`, `scoring/` (see `DEFENDER.md` for the kill path).
-Also built: `cli/` (`python -m cli drill` only: n trials, verdicts, intervals; `ares/results.py`
-holds its result contracts), answer-key variants A/B and the `before`/`after` policy
-(`lab/leakbox.after.yaml`). Not yet built: DNS sinkhole, the other `cli` subcommands, `web/`,
-variant C, bait generator, fix templates, `apply-fix`.
+`lab/` (Leakbox proxy + fake services, answer-key variants A/B, the `before`/`after` policy in
+`lab/leakbox.after.yaml`), `defender/`, `scoring/` (see `DEFENDER.md` for the kill path;
+`scoring/fixes.py` names a breakout's cause), and `cli/`: `ares drill` (`cli/drill.py`: n trials,
+verdicts, intervals; `ares/results.py` holds its contracts), `ares trial` (`cli/lab.py`: one trial
+with the kill wired in), `ares fix` (`cli/pipeline.py`, `cli/github_pr.py`, `cli/pr_writer.py`:
+name the flaw, rerun on the fixed policy, open a GitHub PR). Not yet built: DNS sinkhole, `web/`,
+variant C, bait generator, wiring `ares trial --target`'s rerun to `--variant B --policy after`.
 
 ## Commands
 

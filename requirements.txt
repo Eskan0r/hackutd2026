@@ -11,6 +11,7 @@ docker>=7.0
 scipy>=1.13
 numpy>=1.26
 cryptography>=42.0
+python-dotenv>=1.0   # cli loads keys from the repo-root .env
 
 # dev
 pytest>=8.0
