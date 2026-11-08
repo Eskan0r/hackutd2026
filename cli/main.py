@@ -3,7 +3,8 @@
     ares drill --variant A --policy before --n 20     n trials, verdict rows, intervals (cli/drill.py)
     ares drill --variant B --policy after  --n 20
     ares drill --drill normal --policy after --n 1
-    ares trial [recording] [--target owner/repo]       one trial, or the fix loop (cli/lab.py, cli/pipeline.py)
+    ares drill --target owner/repo [--mode live]       the whole containment + fix + PR loop (cli/pipeline.py)
+    ares trial [recording] [--target owner/repo]       one trial, or the same loop (cli/lab.py, cli/pipeline.py)
     ares fix lab/runs/kills/<run>.json [--open-pr]      name the cause, print or PR the leakbox.yaml change
     ares flaws [on|off|reset] [names] [--policy after]
     ares down
@@ -17,6 +18,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import textwrap
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -232,12 +234,29 @@ def drill_cmd(
     runs_dir: Path = typer.Option(
         Path("lab/runs"), help="Where result.json and summary.json land."
     ),
+    target: Optional[str] = typer.Option(
+        None, help="owner/repo of a company sandbox policy. Runs the whole loop instead: selftest, "
+                   "kill checks, drill, fix, fresh rerun, replays, signed report, PR (needs GITHUB_TOKEN)."),
+    recording: str = typer.Option(
+        "fetch_through", help="With --target and --mode scripted: the recording the agent replays."),
+    base: str = typer.Option("main", help="With --target: branch to read the policy from and open the PR against."),
+    pr: bool = typer.Option(True, "--pr/--no-pr", help="With --target: open the PR once the fix is verified."),
 ):
     """Run n trials against the lab and print each verdict, then the rates with their 95% CIs.
 
+    `ares drill --target you/repo` instead runs the whole containment + fix + PR loop against that
+    repo's policy, in one go (--mode live for Nemotron; --n, --variant and --policy are not used).
+
     Exit code: 0 every trial contained or held; 1 a trial was NOT CONTAINED or failed;
     2 usage or lab error, or a broken event chain.
+    With --target: 0 held or fixed and verified, 1 not fixed or needs review, 2 error, 3 inconclusive.
     """
+    if target:
+        if mode is Mode.scripted and recording not in lab.recordings():
+            _fail("unknown recording %r; one of: %s" % (recording, ", ".join(lab.recordings())))
+        _pipeline(target, base, pr, recording if mode is Mode.scripted else None, lab.DEFAULT_GOAL, None,
+                  Caps(max_tokens=16000))
+        return
     problem = validate(mode.value, drill.value, variant.value)
     if problem:
         _fail(problem)
@@ -378,41 +397,25 @@ def _inconclusive(outcome: Dict[str, Any], max_steps: int):
     return None
 
 
-_STATUS = {
-    "start": ("▶", "cyan"),
-    "info": ("·", None),
-    "done": ("✓", "green"),
-    "fail": ("✗", "red"),
-}
+_COLORS = {"start": "cyan", "done": "green", "fail": "red"}
 
 
-def _pipeline(
-    target: str,
-    base: str,
-    open_pr: bool,
-    recording: Optional[str],
-    goal: str,
-    model: Optional[str],
-    caps: Caps,
-) -> None:
+def _pipeline(target: str, base: str, open_pr: bool, recording: Optional[str], goal: str,
+              model: Optional[str], caps: Caps) -> None:
     token = os.environ.get("GITHUB_TOKEN", "")
-    if not token:
-        _fail(
-            "--target needs GITHUB_TOKEN (fine-grained, that repo, Contents + Pull requests read/write)"
-        )
     typer.secho(BANNER, fg="cyan", bold=True)
     typer.echo()
-    typer.echo(_rule("FIX LOOP · %s@%s" % (target, base)))
+    problems = pipeline.preflight(target, token, live=not recording)
+    if problems:
+        typer.echo(_rule("PREFLIGHT"))
+        for p in problems:
+            typer.secho("  ✗ %s" % p, fg="red")
+        raise typer.Exit(EXIT_ERROR)
+    typer.echo(_rule("DRILL + FIX LOOP · %s@%s" % (target, base)))
 
     def show(line: Dict[str, Any]) -> None:
-        mark, color = _STATUS.get(line["status"], ("·", None))
-        stage = line["stage"] + (
-            "" if line["round"] is None else " r%d" % line["round"]
-        )
-        typer.echo(
-            "  %s %-9s %s"
-            % (typer.style(mark, fg=color, bold=True), stage, line["message"])
-        )
+        mark, text = pipeline.console_line(line)  # the same text the PR's console section shows
+        typer.echo("  %s %s" % (typer.style(mark, fg=_COLORS.get(line["status"]), bold=True), text))
 
     try:
         summary = pipeline.run(
@@ -432,20 +435,17 @@ def _pipeline(
         _fail(str(e))
     typer.echo(_rule())
     result = summary["result"]
-    lines = [
-        "%s   %s" % (result.upper().replace("_", " "), summary["pipeline_id"]),
-        summary["reason"] or "",
-    ]
+    lines = ["%s   %s" % (result.upper().replace("_", " "), summary["pipeline_id"])]
+    lines += textwrap.wrap(summary["reason"] or "", WIDTH - 4)
+    for k in summary["containment"]["kill_checks"]:
+        lines.append("kill check (%s policy): %s, %s ms, levers %s, %d leaks" % (
+            k["policy"], "contained" if k["contained"] else "NOT CONTAINED", k["time_to_kill_ms"],
+            k["levers_verified"], k["post_kill_leaks"]))
     if summary.get("pr", {}).get("url"):
         lines.append("PR: %s" % summary["pr"]["url"])
     lines.append("summary: runs/pipelines/%s/summary.json" % summary["pipeline_id"])
-    _box(
-        lines,
-        {"fixed": "green", "held": "green", "inconclusive": "yellow"}.get(
-            result, "red"
-        ),
-    )
-    if summary.get("pr", {}).get("error"):
+    _box(lines, {"fixed": "green", "held": "green", "inconclusive": "yellow"}.get(result, "red"))
+    if result == "error" or summary.get("pr", {}).get("error"):
         raise typer.Exit(EXIT_ERROR)
     raise typer.Exit(
         {"fixed": 0, "held": 0, "inconclusive": EXIT_INCONCLUSIVE}.get(
@@ -820,6 +820,28 @@ def fix(
         except github_pr.PRError as e:
             _fail(str(e))
         typer.secho("  PR: %s" % url, fg="green", bold=True)
+
+
+@app.command("setup-target")
+def setup_target(repo: str = typer.Argument(..., help="owner/name of a GitHub repo you own, e.g. you/ares-sandbox-testing.")):
+    """Turn an empty (or any) repo into a company sandbox Ares can test: adds lab/leakbox.yaml with the
+    Leakbox flaws on. Leaves an existing policy alone. Needs GITHUB_TOKEN with Contents read/write.
+    """
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        _fail("GITHUB_TOKEN is missing: add it to .env (fine-grained, this repo, Contents + Pull requests read/write)")
+    # The committed policy, not a locally toggled copy: a target should start with every flaw as shipped.
+    shown = subprocess.run(["git", "show", "HEAD:lab/leakbox.yaml"], cwd=lab.REPO, text=True, capture_output=True)
+    text = shown.stdout if shown.returncode == 0 else lab.LEAKBOX_YAML.read_text()
+    try:
+        branch, created = github_pr.GitHub(repo, token).seed_policy(text)
+    except github_pr.PRError as e:
+        _fail(str(e))
+    if created:
+        typer.secho("  ✓ added lab/leakbox.yaml to %s@%s" % (repo, branch), fg="green")
+    else:
+        typer.echo("  · %s@%s already has lab/leakbox.yaml; left it as is" % (repo, branch))
+    typer.echo("  next: ./.venv/bin/ares drill --target %s" % repo)
 
 
 @app.command()

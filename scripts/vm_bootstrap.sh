@@ -80,6 +80,7 @@ if [ ! -f .env ]; then
   cp .env.example .env
   chmod 600 .env
   sed -i "s/^ARES_ADMIN_TOKEN=.*/ARES_ADMIN_TOKEN=$(openssl rand -hex 16)/" .env
+  sed -i "s/^ARES_SANDBOX_RUNTIME=.*/ARES_SANDBOX_RUNTIME=runsc/" .env
 fi
 
 # 6. The shared evidence dir. Docker or a selftest creates it root/755, but the gateway

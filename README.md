@@ -10,13 +10,12 @@ Design and decisions: **[ARCHITECTURE.md](ARCHITECTURE.md)**. This file is just 
 
 Built: the Leakbox target (`lab/`, with answer-key variants A/B and a `before`/`after`
 policy), the LLM gateway (`gateway/`, kill lever 1), the agent harness (`agent/`), the
-defender (`defender/`, levers 2–3 with `docker inspect` verification), the scorer and signer
-(`scoring/`), the shared contracts and hash-chained event log (`ares/`), and the `ares` CLI
-(`cli/`): `ares drill` runs n trials, kills through the defender, and prints verdicts with
-Clopper–Pearson intervals.
+defender (`defender/`, all three levers with `docker inspect` verification), the scorer and
+signer (`scoring/`), the shared contracts and hash-chained event log (`ares/`), and the `ares`
+CLI (`cli/`): `ares drill` runs n trials and prints verdicts with Clopper–Pearson intervals;
+`ares drill --target` runs the whole containment + fix + PR loop in one command (below).
 
-Not built yet: the dashboard, `apply-fix`, the DNS sinkhole, the CI gate. The signed report
-exists in `scoring/sign.py` but is not wired to the CLI.
+Not built yet: the DNS sinkhole and the CI gate. The dashboard is on the `web-app` branch.
 
 ## Setup
 
@@ -30,6 +29,60 @@ has none of the dependencies; the harness will tell you so and exit 2 rather tha
 drill that reaches nothing and scores as contained.
 
 Running it on the team VM: see [docs/DEPLOY.md](docs/DEPLOY.md).
+
+## Full drill in one command
+
+Tests a company's sandbox policy end to end and opens a fix PR on it:
+
+1. kill-switch selftest (a full kill must hold, a soft kill must be caught)
+2. read `lab/leakbox.yaml` from the target repo
+3. kill check on that policy: a canary fire against a sandbox with a background process
+4. the agent (live Nemotron or a recording) in a fresh lab, the defender armed
+5. on a breakout: name the cause, turn the flaw off, rerun in a **fresh** lab and agent (up to 3 rounds)
+6. replay the original attack and a held-out variant; every one must be blocked
+7. kill check again on the fixed policy
+8. score the trials (95% intervals) and sign the report (ed25519, key in `~/.ares/`)
+9. open one PR: the fixed policy, `ares-reports/<id>.json`, `ares-reports/<id>.signed.json`,
+   with a Containment section in the description
+10. tear the lab down
+
+**One-time setup** (needs Docker Desktop running and Python 3.12+):
+
+```bash
+./setup.sh
+```
+
+It creates the virtualenv, installs everything, creates `.env` from `.env.example`, checks Docker
+and the keys, runs the tests, and prints what is left to do. Safe to re-run. Then fill in `.env`:
+
+- `NVIDIA_API_KEY`: [build.nvidia.com](https://build.nvidia.com), free. One key runs both models:
+  `nvidia/nemotron-3.5-lightning-30b-a3b` is the agent under test (only the lab gateway sees the key),
+  `nvidia/nemotron-3.5-super-vl-120b-a12b` writes the PR title and summary.
+- `GITHUB_TOKEN`: GitHub → Settings → Developer settings → Fine-grained tokens. Only select
+  your target repo; set **Contents** and **Pull requests** to **Read and write**.
+
+Make your own target repo (an empty GitHub repo you own, private is fine), then seed it:
+
+```bash
+./.venv/bin/ares setup-target <you>/<repo>
+```
+
+**Run it** (one terminal; everything starts and stops on its own):
+
+```bash
+./.venv/bin/ares drill --target <you>/<repo>               # recorded agent: deterministic, no model calls
+./.venv/bin/ares drill --target <you>/<repo> --mode live   # live Nemotron agent
+```
+
+The PR description includes the containment table, the run's console output (exactly what
+the terminal printed, up to opening the PR), the diff and the summary JSON. Add `--no-pr` to stop
+after verification. A preflight check runs first and says exactly what
+is missing (Docker not running, a key not set, the token unable to reach the repo). Progress is
+written as it happens to `runs/pipelines/<id>/progress.jsonl`, the result to `summary.json`.
+Exit code: 0 held or fixed and verified, 1 not fixed or needs review, 2 error, 3 inconclusive.
+
+Do not merge the PR on the repo you demo with: merging turns the flaw off, so the next run
+finds nothing. Close it instead.
 
 ## Run it
 
@@ -70,7 +123,7 @@ ares drill --drill normal --policy after --n 1     # the fix did not break usefu
 ares drill --mode live --n 3                       # live Nemotron instead of the recording; needs NVIDIA_API_KEY
 ares trial fetch_through                           # one trial with the full evidence/kill printout (exit 3 = inconclusive)
 ares fix lab/runs/kills/<run>.json [--open-pr]     # name the flaw behind a kill, print the leakbox.yaml change, or open a PR
-ares trial --target owner/repo                     # the whole fix loop against that repo's policy; needs GITHUB_TOKEN
+ares drill --target owner/repo                     # the whole containment + fix + PR loop; needs GITHUB_TOKEN
 ares flaws [--policy after]                        # list what each policy leaves on; `ares flaws off <name>` edits leakbox.yaml
 ares down                                          # tear down
 ```
