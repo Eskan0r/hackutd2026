@@ -14,4 +14,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 # Everything cli/drill.py imports or spawns: lab.leakbox.config, scoring.score,
 # ares.*, and `python -m defender` as a subprocess.
-packages = ["ares", "cli", "lab", "lab.leakbox", "scoring", "defender"]
+# "agent" is here so the installed `ares` console script can read
+# agent.harness.DEFAULT_MODEL from any directory -- the CLI names the model that
+# will run, and that value belongs with the harness that runs it. The sandbox
+# image does not use this wheel (lab/sandbox/Dockerfile does `COPY agent/`), so
+# shipping agent/ here does not put anything extra in the box.
+packages = ["agent", "ares", "cli", "lab", "lab.leakbox", "scoring", "defender"]

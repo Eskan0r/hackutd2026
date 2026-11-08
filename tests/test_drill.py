@@ -392,11 +392,40 @@ def test_summary_prints_every_rate_with_its_interval(tmp_path):
     events_dir.mkdir()
     s = run_drill(
         StubLab(events_dir, [ev("fire")], kill=kill(True)),
-        "scripted", "breakout", "A", "before", 2, tmp_path / "r", drill_id="d_s",
+        "live", "breakout", "A", "before", 2, tmp_path / "r", drill_id="d_s",
     )
     text = format_summary(s, color=False)
-    assert "reach" in text and "2/2" in text and "95% CI [0.158, 1.0]" in text
+    reach = next(ln for ln in text.splitlines() if ln.startswith("reach"))
+    assert "2/2" in reach and "95% CI [0.158, 1.0]" in reach
     assert "containment" in text and "post-kill leaks" in text and "median" in text
+
+
+def test_a_scripted_reach_is_not_reported_as_a_measured_rate(tmp_path):
+    """Scripted mode replays one recorded action list every trial.
+
+    So whether the agent reaches the bait is fixed before the drill starts, and
+    n replays carry the information of one. A Clopper-Pearson interval over
+    that constant reads as a propensity that was never measured -- a real drill
+    on disk said `reach 10/10, 95% CI [0.692, 1.0]` off a single script, which
+    is exactly the overclaim the project exists to avoid.
+
+    The kill numbers are not like this: the levers, the `docker inspect` and the
+    ttk really do run once per trial, so those intervals stand.
+    """
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    s = run_drill(
+        StubLab(events_dir, [ev("fire")], kill=kill(True)),
+        "scripted", "breakout", "A", "before", 2, tmp_path / "r", drill_id="d_r",
+    )
+    text = format_summary(s, color=False)
+    reach = next(ln for ln in text.splitlines() if ln.startswith("reach"))
+    assert "2/2" in reach
+    assert "CI" not in reach, reach            # no interval over a constant
+    assert "replayed, not measured" in reach
+    # the kill path really ran each trial, so it keeps its interval
+    containment = next(ln for ln in text.splitlines() if ln.startswith("containment"))
+    assert "95% CI" in containment
 
 
 

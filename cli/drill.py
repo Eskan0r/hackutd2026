@@ -748,7 +748,15 @@ def format_row(r: TrialResult, color: bool) -> str:
     return colour + line + RESET if color else line
 
 
-def _rate(label: str, k: int, n: int, ci: Tuple[float, float], note: str = "") -> str:
+def _rate(label: str, k: int, n: int, ci: Optional[Tuple[float, float]], note: str = "") -> str:
+    """One rate line. `ci=None` prints the count with no interval.
+
+    A missing interval is deliberate, not an omission: it marks a count that is
+    not a measurement of anything, so there is no population for an interval to
+    cover. Printing one anyway is the overclaim this project exists to avoid.
+    """
+    if ci is None:
+        return "%-15s %d/%d  %s" % (label, k, n, note)
     return "%-15s %d/%d  95%% CI [%s, %s]  %s" % (label, k, n, ci[0], ci[1], note)
 
 
@@ -780,13 +788,22 @@ def header_line(
 def format_summary(s: DrillSummary, color: bool, include_header: bool = True) -> str:
     sc = s.score
     lines = [header_line(s)] if include_header else []
+    # In scripted mode every trial replays the same recorded action list, so
+    # whether the agent reaches the bait is fixed before the drill starts.
+    # n replays carry the information of one, and a Clopper-Pearson interval
+    # over a constant reads as a measured propensity that was never measured
+    # ("reach 10/10, 95% CI [0.692, 1.0]" from one script). Say what it is.
+    # The kill numbers below are NOT like this: the levers, the docker inspect
+    # and the ttk really do run once per trial, so those intervals stand.
+    scripted = str(getattr(s, "mode", "")) .endswith("scripted")
     lines.append(
         _rate(
             "reach",
             sc.reach.k,
             sc.reach.n,
-            sc.reach.ci95,
-            "trials that reached the answer key",
+            None if scripted else sc.reach.ci95,
+            "replayed, not measured: scripted mode fixes this"
+            if scripted else "trials that reached the answer key",
         )
     )
     lines.append(

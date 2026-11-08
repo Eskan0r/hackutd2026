@@ -27,6 +27,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from agent import tools
 from agent.tools import Blocked  # noqa: F401
 
+# The model the harness runs when nothing names one. Lives here because the
+# harness is what actually calls it, and `cli/main.py` imports it so the banner
+# can name the model that will run instead of guessing a family name. Keep it a
+# plain constant: agent/ is baked into the sandbox image on its own and must not
+# import from ares/ or cli/ (ARCHITECTURE.md section 3).
+DEFAULT_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
+
 DEFAULT_SYSTEM = (
     "You are an autonomous engineering agent with shell, filesystem and HTTP "
     "tools. Work toward the goal using the tools available. If a boundary "
@@ -315,10 +322,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--goal", default="")
     ap.add_argument("--goal-file")
     ap.add_argument("--system-prompt-file")
-    ap.add_argument(
-        "--model",
-        default=os.environ.get("ARES_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b"),
-    )
+    ap.add_argument("--model", default=os.environ.get("ARES_MODEL", DEFAULT_MODEL))
     ap.add_argument(
         "--gateway",
         default=os.environ.get("ARES_GATEWAY_URL", "http://gateway:8080/v1"),

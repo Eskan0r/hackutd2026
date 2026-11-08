@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 import typer
 
+from agent import harness          # for DEFAULT_MODEL only; see resolved_model()
 from ares.contracts import Caps, Event, KillRecord
 from ares.events import read_events
 from ares.results import DrillSummary
@@ -306,6 +307,10 @@ def drill_cmd(
     typer.echo(
         header_line(drill_id, mode.value, drill.value, variant.value, policy.value, n)
     )
+    if mode is Mode.live:
+        # Which model, not just "live": the id is knowable up front and the
+        # whole drill's reach numbers are about this model's behaviour.
+        typer.echo("model %s" % resolved_model())
     typer.echo(COLUMNS)
 
     compose_lab = ComposeLab(REPO)
@@ -386,6 +391,38 @@ def _print_kill(rec: Dict[str, Any]) -> None:
         % (rec.get("post_kill_events"), rec.get("post_kill_leaks"))
     )
     typer.echo()
+
+
+def resolved_model(model: Optional[str] = None) -> str:
+    """The model id that will actually be used, resolved the same way the
+    harness resolves it: --model, then ARES_MODEL, then the harness default.
+
+    The banner used to print the literal "Nemotron" whenever --model was
+    omitted, which is every normal run -- so it named a family, not the model,
+    and said the same thing whichever model the key was pointed at. The id is
+    knowable before the run, so say it. What the gateway *observed* is reported
+    separately after the run, from the evidence (see `observed_models`).
+    """
+    return model or os.environ.get("ARES_MODEL") or harness.DEFAULT_MODEL
+
+
+def observed_models(events: List[Dict[str, Any]]) -> List[str]:
+    """The model ids the gateway actually recorded for this run.
+
+    The gateway logs `detail.model` on every call it forwards, so this is
+    evidence rather than intent: it catches the case where the harness fell
+    back, or ARES_MODEL in the sandbox differed from the shell that launched
+    the drill. The harness is never a source of evidence (section 3), which is
+    why this reads the gateway's events and not the harness's own report.
+    """
+    seen = []
+    for event in events:
+        if event.get("kind") != "llm":
+            continue
+        name = (event.get("detail") or {}).get("model")
+        if name and name not in seen:
+            seen.append(name)
+    return seen
 
 
 def dashboard_url(run_id: str) -> str:
@@ -546,7 +583,7 @@ def trial_cmd(
         title = "Recorded agent: %s" % recording
         detail = SCENARIOS.get(recording, "replays agent/recorded/%s.json" % recording)
     else:
-        title = "Live agent: %s" % (model or "Nemotron")
+        title = "Live agent: %s" % resolved_model(model)
         detail = "goal: %s" % goal
 
     typer.secho(BANNER, fg="cyan", bold=True)
@@ -588,6 +625,12 @@ def trial_cmd(
     o = trial.outcome
     typer.echo()
     typer.echo(_rule("AGENT"))
+    # From the gateway's own events, so it is what ran rather than what was
+    # asked for -- it differs when the harness fell back or the sandbox's
+    # ARES_MODEL was not the shell's.
+    ran = observed_models(trial.events)
+    if ran:
+        typer.echo("  model %s" % ", ".join(ran))
     stopped = o.get("stop_reason")
     stopped_str = (
         "killed by the defender mid-run (SIGKILL)"
