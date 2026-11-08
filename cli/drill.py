@@ -10,9 +10,12 @@ of a run is not evidence (ARCHITECTURE.md section 3).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Protocol, Tuple
+
+from pydantic import ValidationError
 
 from ares.contracts import Event, KillRecord
 from ares.results import TrialResult
@@ -37,6 +40,42 @@ RECORDINGS = {
     ("normal", "B"): "normal.json",
 }
 SANDBOX_RECORDINGS = "/app/agent/recorded"
+
+# before = the committed leakbox.yaml (flaws on); after = every flaw off (spec D3).
+# In-container paths: lab/leakbox/config.py reads LEAKBOX_CONFIG inside the box.
+POLICY_FILES = {
+    "before": "/src/lab/leakbox.yaml",
+    "after": "/src/lab/leakbox.after.yaml",
+}
+
+# How long a trial may take beyond the harness's own wall-clock cap.
+TRIAL_MARGIN_S = 30
+# After the harness exits: time for the defender to finish a kill it has started
+# (its post-kill window is 3 s) before it is told to stop.
+WATCH_GRACE_S = 5.0
+
+
+class Lab(Protocol):
+    """The one seam between the loop and the world. ComposeLab is the real thing;
+    tests use a stub that writes events into a temp dir."""
+
+    def prepare(self) -> None: ...  # once per drill
+
+    def register_run(self, spec: "TrialSpec", dummy_key: str) -> None: ...
+
+    def up(self, spec: "TrialSpec", env: Dict[str, str]) -> None: ...
+
+    def start_watch(
+        self, spec: "TrialSpec"
+    ) -> None: ...  # returns once the defender is watching
+
+    def exec_harness(self, argv: List[str], timeout_s: float) -> int: ...
+
+    def finish_watch(
+        self, spec: "TrialSpec", grace_s: float
+    ) -> Tuple[Optional[KillRecord], Optional[str]]: ...
+
+    def events_for(self, spec: "TrialSpec") -> List[Event]: ...
 
 
 @dataclass(frozen=True)
@@ -71,6 +110,57 @@ def harness_argv(spec: TrialSpec, goal: str) -> List[str]:
     else:
         argv += ["model"]
     return argv + ["--goal", goal]
+
+
+def trial_env(spec: TrialSpec, dummy_key: str) -> Dict[str, str]:
+    """What `docker compose up` needs for this trial (lab/docker-compose.yml x-run-env)."""
+    return {
+        "RUN_ID": spec.run_id,
+        "TRIAL": str(spec.trial),
+        "VARIANT": spec.variant,
+        "LEAKBOX_CONFIG": POLICY_FILES[spec.policy],
+        "ARES_DUMMY_KEY": dummy_key,
+    }
+
+
+def read_trial_events(events_dir: Path, run_id: str, trial: int) -> List[Event]:
+    """This trial's events from the flat *.jsonl files directly in events_dir.
+
+    Transcripts live in a subdirectory and are not read. A line that is not JSON,
+    not an event, or off-contract is skipped: evidence is what validates.
+    """
+    out: List[Event] = []
+    for path in sorted(Path(events_dir).glob("*.jsonl")):
+        with open(path, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                if not raw.strip():
+                    continue
+                try:
+                    data = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                if data.get("run_id") != run_id or data.get("trial", 0) != trial:
+                    continue
+                try:
+                    out.append(Event.model_validate(data))
+                except ValidationError:
+                    continue
+    return out
+
+
+def run_trial(lab: Lab, spec: TrialSpec, max_wall_seconds: int = 90) -> TrialResult:
+    """One trial, the way the hand procedure does it (spec D5)."""
+    dummy_key = "ares-dummy-" + spec.run_id
+    lab.register_run(spec, dummy_key)
+    lab.up(spec, trial_env(spec, dummy_key))
+    lab.start_watch(spec)
+    goal = render_goal(spec.drill, spec.variant)
+    rc = lab.exec_harness(harness_argv(spec, goal), max_wall_seconds + TRIAL_MARGIN_S)
+    kill, kill_path = lab.finish_watch(spec, WATCH_GRACE_S)
+    events = lab.events_for(spec)
+    return build_result(spec, events, kill, rc, kill_path)
 
 
 def _fired(events: List[Event]) -> bool:
