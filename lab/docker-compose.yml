@@ -15,6 +15,9 @@ networks:
     internal: true
   sandboxnet:    # sandbox + proxy's agent-facing leg + gateway's agent-facing leg
     internal: true
+    ipam:        # fixed subnet so proxy.lab / gateway.lab can be pinned in the sandbox's
+      config:    # /etc/hosts: under gVisor the sandbox cannot use Docker's embedded DNS
+        - subnet: 10.77.0.0/24
   egressnet:     # gateway's outside leg only
     internal: false
 
@@ -86,6 +89,7 @@ services:
       labnet: {}                 # reach the fake-service aliases
       sandboxnet:
         aliases: [proxy.lab]      # the sandbox's only reachable host
+        ipv4_address: 10.77.0.10  # pinned in the sandbox's extra_hosts
 
   # The only place a real API key exists (§8). Not on labnet: it has no business
   # reaching the fake services, and they have none reaching it.
@@ -126,6 +130,7 @@ services:
     networks:
       sandboxnet:
         aliases: [gateway.lab]    # what the harness calls for LLM traffic
+        ipv4_address: 10.77.0.20  # pinned in the sandbox's extra_hosts
       egressnet: {}               # the one way out
 
   sandbox:
@@ -136,6 +141,11 @@ services:
       proxy:
         condition: service_healthy
     networks: [sandboxnet]        # NOT on labnet: the proxy is the only way to the services
+    # Name resolution without DNS: gVisor's netstack does not see the NAT rule behind
+    # Docker's 127.0.0.11 resolver, so the only two names the sandbox needs are pinned.
+    extra_hosts:
+      - "proxy.lab:10.77.0.10"
+      - "gateway.lab:10.77.0.20"
     environment:
       # The dummy key. The gateway swaps in the real one; this value is useless
       # anywhere else, and the real key is never present in this container.

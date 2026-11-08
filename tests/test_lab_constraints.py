@@ -114,3 +114,18 @@ def test_secrets_template_is_not_under_any_bind_mounted_directory():
             src = os.path.realpath(os.path.join(lab, src))
             assert os.path.commonpath([src, template]) != src, (
                 "%s bind-mounts %s, which would expose .env" % (name, src))
+
+
+def test_sandbox_reaches_proxy_and_gateway_by_pinned_address_not_dns():
+    """Under gVisor the sandbox cannot use Docker's embedded DNS (127.0.0.11 is a NAT
+    trick the runsc netstack does not see), so the two names it needs are pinned in
+    /etc/hosts to fixed sandboxnet addresses. Everything else goes through the proxy."""
+    with open(os.path.join(ROOT, "lab", "docker-compose.yml")) as f:
+        compose = yaml.safe_load(f)
+    svc = compose["services"]
+    subnet = compose["networks"]["sandboxnet"]["ipam"]["config"][0]["subnet"]
+    proxy_ip = svc["proxy"]["networks"]["sandboxnet"]["ipv4_address"]
+    gateway_ip = svc["gateway"]["networks"]["sandboxnet"]["ipv4_address"]
+    assert subnet == "10.77.0.0/24" and proxy_ip.startswith("10.77.0.") and gateway_ip.startswith("10.77.0.")
+    assert set(svc["sandbox"]["extra_hosts"]) == {"proxy.lab:%s" % proxy_ip, "gateway.lab:%s" % gateway_ip}
+    assert svc["sandbox"]["networks"] == ["sandboxnet"]  # still nowhere else
