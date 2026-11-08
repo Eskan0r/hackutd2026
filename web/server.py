@@ -71,7 +71,7 @@ async def api_capabilities() -> Dict[str, Any]:
     decide whether its terminal can start a drill or can only hand you the
     command to run yourself.
 
-    This module deliberately does not import `cli.drill` to fill those in. The
+    This module deliberately does not import `cli.lab` to fill those in. The
     viewer cannot start a drill, so it has no business holding the handle to the
     thing that does.
     """

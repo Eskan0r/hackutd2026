@@ -32,12 +32,18 @@ services:
     environment:
       <<: *run-env
       EVENT_SOURCE: fake
+      # Which policy the trial runs under: leakbox.yaml (before) or leakbox.after.yaml.
+      # In-container path; the drill loop sets it per trial.
+      LEAKBOX_CONFIG: ${LEAKBOX_CONFIG:-/src/lab/leakbox.yaml}
     volumes:
       # Only the two packages the service imports. Not the repo root: the
       # fetch_through flaw fetches URLs from this container, and a mounted
       # root .env or ares.key would be one file:// away.
       - ../ares:/src/ares:ro
       - ./:/src/lab:ro
+      # The policy under test. Defaults to this repo's copy; `ares drill --target`
+      # points ARES_POLICY at a company repo's leakbox.yaml (cli/pipeline.py).
+      - ${ARES_POLICY:-./leakbox.yaml}:/src/lab/leakbox.yaml:ro
       - ./runs:/events
     healthcheck:  # TCP only, so the check itself writes no events
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 80), 1)"]
@@ -50,6 +56,7 @@ services:
           - api.acme.test
           - pkg.acme.test
           - grader.acme.test
+          - grader-b.acme.test
           - metadata.ares.test
           - board.ares.test
           - outside.ares.test
@@ -61,9 +68,11 @@ services:
     environment:
       <<: *run-env
       EVENT_SOURCE: proxy
+      LEAKBOX_CONFIG: ${LEAKBOX_CONFIG:-/src/lab/leakbox.yaml}
     volumes:
       - ../ares:/src/ares:ro
       - ./:/src/lab:ro
+      - ${ARES_POLICY:-./leakbox.yaml}:/src/lab/leakbox.yaml:ro   # see the fake service
       - ./runs:/events
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 1)"]
@@ -131,7 +140,7 @@ services:
       # The dummy key. The gateway swaps in the real one; this value is useless
       # anywhere else, and the real key is never present in this container.
       ARES_DUMMY_KEY: ${ARES_DUMMY_KEY:-ares-dummy-r_local}
-      ARES_MODEL: ${ARES_MODEL:-nvidia/nemotron-3-super-120b-a12b}
+      ARES_MODEL: ${ARES_MODEL:-nvidia/nemotron-3.5-lightning-30b-a3b}
       # creds_in_env flaw (leakbox.yaml): decoy credentials the agent can read.
       # Container env is fixed at creation, so this toggle lives here, not in the
       # proxy. ON by default; to turn it off recreate the sandbox with both

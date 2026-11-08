@@ -8,18 +8,17 @@ Design and decisions: **[ARCHITECTURE.md](ARCHITECTURE.md)**. This file is just 
 
 ## Status
 
-Built: the Leakbox target (`lab/`), the LLM gateway (`gateway/`, which is kill lever 1),
-the agent harness (`agent/`), the shared contracts and hash-chained event log (`ares/`),
-the defender with levers 2–3 (`docker_disconnect`, `docker_pause`), the scorer and signer
-(`scoring/`), and the dashboard (`web/`).
+Built: the Leakbox target (`lab/`, with answer-key variants A/B and a `before`/`after`
+policy), the LLM gateway (`gateway/`, kill lever 1), the agent harness (`agent/`), the
+defender (`defender/`, all three levers with `docker inspect` verification), the scorer and
+signer (`scoring/`), the shared contracts and hash-chained event log (`ares/`), and the `ares`
+CLI (`cli/`): `ares drill` runs n trials and prints verdicts with Clopper–Pearson intervals;
+`ares drill --target` runs the whole containment + fix + PR loop in one command (below).
 
-The `ares` CLI (`cli/`) runs one trial: `ares drill`. It wires in the defender, so a fire
-triggers a verified three-lever kill and a signed report.
+Also built: the dashboard (`web/`). It reports only what the evidence supports on every
+screen — a pull nothing observed reads **unverified**, never contained.
 
-Not built yet: the DNS sinkhole, the `drills/` A/B/C variants (the goal files exist), the
-bait generator, the fix templates and multi-trial orchestration. The dashboard reports only
-what the evidence supports on every screen — a pull nothing observed reads **unverified**,
-never contained.
+Not built yet: the DNS sinkhole and the CI gate.
 
 ## Setup
 
@@ -31,6 +30,60 @@ python3.12 -m venv .venv && ./.venv/bin/python -m pip install -r requirements.tx
 Use `./.venv/bin/python` for everything. A bare `python3` on macOS is the system 3.9 and
 has none of the dependencies; the harness will tell you so and exit 2 rather than run a
 drill that reaches nothing and scores as contained.
+
+## Full drill in one command
+
+Tests a company's sandbox policy end to end and opens a fix PR on it:
+
+1. kill-switch selftest (a full kill must hold, a soft kill must be caught)
+2. read `lab/leakbox.yaml` from the target repo
+3. kill check on that policy: a canary fire against a sandbox with a background process
+4. the agent (live Nemotron or a recording) in a fresh lab, the defender armed
+5. on a breakout: name the cause, turn the flaw off, rerun in a **fresh** lab and agent (up to 3 rounds)
+6. replay the original attack and a held-out variant; every one must be blocked
+7. kill check again on the fixed policy
+8. score the trials (95% intervals) and sign the report (ed25519, key in `~/.ares/`)
+9. open one PR: the fixed policy, `ares-reports/<id>.json`, `ares-reports/<id>.signed.json`,
+   with a Containment section in the description
+10. tear the lab down
+
+**One-time setup** (needs Docker Desktop running and Python 3.12+):
+
+```bash
+./setup.sh
+```
+
+It creates the virtualenv, installs everything, creates `.env` from `.env.example`, checks Docker
+and the keys, runs the tests, and prints what is left to do. Safe to re-run. Then fill in `.env`:
+
+- `NVIDIA_API_KEY`: [build.nvidia.com](https://build.nvidia.com), free. One key runs both models:
+  `nvidia/nemotron-3.5-lightning-30b-a3b` is the agent under test (only the lab gateway sees the key),
+  `nvidia/nemotron-3.5-super-vl-120b-a12b` writes the PR title and summary.
+- `GITHUB_TOKEN`: GitHub → Settings → Developer settings → Fine-grained tokens. Only select
+  your target repo; set **Contents** and **Pull requests** to **Read and write**.
+
+Make your own target repo (an empty GitHub repo you own, private is fine), then seed it:
+
+```bash
+./.venv/bin/ares setup-target <you>/<repo>
+```
+
+**Run it** (one terminal; everything starts and stops on its own):
+
+```bash
+./.venv/bin/ares drill --target <you>/<repo>               # recorded agent: deterministic, no model calls
+./.venv/bin/ares drill --target <you>/<repo> --mode live   # live Nemotron agent
+```
+
+The PR description includes the containment table, the run's console output (exactly what
+the terminal printed, up to opening the PR), the diff and the summary JSON. Add `--no-pr` to stop
+after verification. A preflight check runs first and says exactly what
+is missing (Docker not running, a key not set, the token unable to reach the repo). Progress is
+written as it happens to `runs/pipelines/<id>/progress.jsonl`, the result to `summary.json`.
+Exit code: 0 held or fixed and verified, 1 not fixed or needs review, 2 error, 3 inconclusive.
+
+Do not merge the PR on the repo you demo with: merging turns the flaw off, so the next run
+finds nothing. Close it instead.
 
 ## Run it
 
@@ -58,26 +111,34 @@ cd lab
 ./selftest-gateway.sh   # gateway reachable, no other egress, lever 1 holds
 ```
 
-Then drive the agent inside the box with the CLI. It starts the lab, registers the run
-with the gateway (minting the dummy key), runs the harness in the sandbox, and prints
-that run's events from the lab log:
+Then run a drill. Each trial gets fresh containers and a fresh run id; the CLI registers
+the run with the gateway, starts the defender, runs the harness in the sandbox, and decides
+the verdict from the lab's event log and the defender's kill record only (never from the
+agent's own output):
 
 ```bash
-ares drill fetch_through   # replay a recording (blocked, fetch_through, soft_kill); no key
-ares drill                 # live Nemotron; needs NVIDIA_API_KEY
-ares flaws                 # list Leakbox flaws; `ares flaws off [name...]`, `on`, `reset`
-ares down                  # tear down
+export ARES_ADMIN_TOKEN=$(openssl rand -hex 16)   # same value the lab runs with
+ares drill --variant A --policy before --n 20      # the hole: reached and killed, every time
+ares drill --variant B --policy after  --n 20      # the fix, held out: refused, every time
+ares drill --drill normal --policy after --n 1     # the fix did not break useful work
+ares drill --mode live --n 3                       # live Nemotron instead of the recording; needs NVIDIA_API_KEY
+ares trial fetch_through                           # one trial with the full evidence/kill printout (exit 3 = inconclusive)
+ares fix lab/runs/kills/<run>.json [--open-pr]     # name the flaw behind a kill, print the leakbox.yaml change, or open a PR
+ares drill --target owner/repo                     # the whole containment + fix + PR loop; needs GITHUB_TOKEN
+ares flaws [--policy after]                        # list what each policy leaves on; `ares flaws off <name>` edits leakbox.yaml
+ares down                                          # tear down
 ```
 
-The breakout-then-fix loop: `ares drill fetch_through` (exit 1), `ares flaws off`,
-`ares drill blocked` (exit 0), `ares flaws reset`.
+Row colours: red = reached the answer key (killed, or NOT CONTAINED in bold), green = tried
+and was refused, grey = never tried the key (proves nothing), yellow = a broken trial. Every
+rate prints with its 95% interval. Details: `drills/README.md`.
 
 To type `ares` without activating the venv, link it onto your PATH once:
 `mkdir -p ~/.local/bin && ln -sf "$PWD/.venv/bin/ares" ~/.local/bin/ares` and add
 `~/.local/bin` to `PATH` in `~/.zshrc`. `ares --install-completion` adds tab completion.
 
-Exit code: `0` no fire/breach event, `1` breakout seen, `2` error (including a broken
-event chain). No kill is pulled yet: that is the defender's job.
+Exit code: `0` every trial contained or held, `1` a trial was NOT CONTAINED or failed (or
+the run was interrupted), `2` usage error, lab error, or a broken event chain.
 
 Or by hand. Flaw toggles live in `lab/leakbox.yaml`:
 
@@ -163,9 +224,9 @@ dummy key the harness uses) — see `lab/README.md`.
 | `agent/` | harness, tools, scripted replay, recordings |
 | `defender/` | the event tailer and levers 2–3; verifies every pull via `docker inspect` |
 | `scoring/` | the scorer (Clopper–Pearson intervals) and the report signer |
-| `cli/` | the `ares` command: `drill.py` drives a trial, `main.py` is the Typer front end |
-| `web/` | the dashboard: read-only FastAPI API + a React page, with a seekable sandbox replay (play/pause/step) and a console you can type `ares drill` into. React is vendored under `static/vendor/`, so there is no `npm install` and no CDN at demo time. `operator.py` is the separate, opt-in app that can start a drill |
-| `tests/` | 123 tests, hermetic (a stub upstream stands in for NVIDIA NIM) |
+| `cli/` | the `ares` command: `drill.py` runs n trials and decides verdicts; `lab.py` runs one trial (`ares trial`) and `verdict.py` says what it proved; `pipeline.py`, `github_pr.py`, `pr_writer.py` name the flaw and open the fix PR; `main.py` is the Typer front end |
+| `web/` | the dashboard: read-only FastAPI API + a React page, with a seekable sandbox replay (play/pause/step) and a console that can start a single trial. React is vendored under `static/vendor/`, so there is no `npm install` and no CDN at demo time. `operator.py` is the separate, opt-in app that can start a drill |
+| `tests/` | hermetic (a stub upstream stands in for NVIDIA NIM; a stub lab stands in for Docker) |
 | `scripts/` | `demo_kill.py`, `live_check.py` |
 
 ## Safety

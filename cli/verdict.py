@@ -75,7 +75,7 @@ def inconclusive(outcome: Dict[str, Any], max_steps: int):
 
 
 def classify(trial: Any, max_steps: int) -> Verdict:
-    """Read a finished `cli.drill.Trial` and say what it proved."""
+    """Read a finished `cli.lab.Trial` and say what it proved."""
     if trial.chain_problems:
         return Verdict(
             "chain_broken", EXIT_ERROR,

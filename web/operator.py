@@ -13,7 +13,7 @@ an object a test can hold rather than a branch somebody might take. The viewer
 app is mounted underneath, so one port still serves the page and the evidence
 API; the operator routes are registered first and therefore win.
 
-What it does *not* do: judge anything. It calls `cli.drill.drill()` -- the same
+What it does *not* do: judge anything. It calls `cli.lab.drill()` -- the same
 function `ares drill` calls -- and reports the verdict `cli/verdict.py` reaches.
 The dashboard cannot reach a conclusion the CLI would not.
 
@@ -45,7 +45,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ares.contracts import Caps
-from cli import drill as lab
+from cli import lab
 from cli.verdict import classify
 from web import model
 from web.server import app as viewer_app

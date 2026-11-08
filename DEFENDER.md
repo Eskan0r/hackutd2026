@@ -45,7 +45,7 @@ Owner: Ronak. Scope: `ares/levers.py`, `defender/`, `scoring/`, plus `KillRecord
 
 | Item | Owner |
 |---|---|
-| Trial orchestration: register run with gateway, set RUN_ID/TRIAL per trial, rebuild sandbox between trials, run n trials, call `score`/`build_report`/`sign_report` | Ronak / Prerita |
+| Trial orchestration: **done** in `cli/drill.py` (`python -m cli drill`): registers each run, sets RUN_ID/TRIAL, recreates the lab per trial, runs `python -m defender watch` as a subprocess, calls `score`. `build_report`/`sign_report` not yet wired. See `docs/superpowers/specs/2026-11-07-variant-b-drill-loop-design.md` | Riyan |
 | Host/container clock skew affects `ttk_ms`; check on VM | Ronak |
 | `egress_violations` (iptables LOG+DROP count) is a `Score` field but always 0 | Riyan |
 | `scripts/demo_kill.py` still says levers 2–3 aren't written | Yash |

@@ -21,14 +21,14 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from cli import drill as lab
+from cli import lab
 from cli.verdict import classify
 from web import operator
 from web.server import app as viewer_app
 
 
 class FakeTrial:
-    """What cli.drill.drill() hands back, minus the lab."""
+    """What cli.lab.drill() hands back, minus the lab."""
 
     def __init__(self, run_id="r_op1", events=(), kill_record=None, chain_problems=(),
                  outcome=None):

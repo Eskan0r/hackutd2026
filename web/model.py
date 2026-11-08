@@ -333,7 +333,7 @@ def load_kill_record(
     """A defender-written kill record, if one exists.
 
     `defender/watch.py` writes one per killed trial as
-    `<events dir>/kills/<run_id>-<trial>.json` (`cli/drill.py` points it at
+    `<events dir>/kills/<run_id>-<trial>.json` (`cli/lab.py` points it at
     `lab/runs/kills`). This is what the page prefers when it is there -- a
     recorded, verified kill always beats a reconstruction, because the defender
     is the only component that actually observed the levers take effect.

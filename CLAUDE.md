@@ -10,22 +10,25 @@ report on whether the boundary held and how fast the agent was stopped.
 build order; read it before any design work. When an implementation decision contradicts it, update
 `ARCHITECTURE.md` in the same change rather than letting them drift.
 
-**Built:** `ares/` (contracts, hash-chained events, the `Lever` protocol and the three Docker
-levers), `lab/` (Leakbox proxy, fake services, bait, sandbox image), `gateway/` (also kill
-lever 1), `agent/` (harness, tools, scripted replay), `defender/` (levers 2–3 + the event
-tailer), `scoring/` (scorer + signer), `cli/` (`ares drill` runs one trial and wires in the
-defender, so a fire now triggers a verified kill — see `DEFENDER.md` for the kill path), and
-`web/` (the read-only dashboard, plus the opt-in operator app).
+**Built:** `ares/contracts.py`, `ares/events.py`, `ares/levers.py`, `gateway/`, `agent/`,
+`lab/` (Leakbox proxy + fake services, answer-key variants A/B, the `before`/`after` policy in
+`lab/leakbox.after.yaml`), `defender/`, `scoring/` (see `DEFENDER.md` for the kill path;
+`scoring/fixes.py` names a breakout's cause), `cli/`: `ares drill` (`cli/drill.py`: n trials,
+verdicts, intervals; `ares/results.py` holds its contracts), `ares trial` (`cli/lab.py`: one trial
+with the kill wired in; `cli/verdict.py` decides what it proved), `ares fix` (`cli/pipeline.py`,
+`cli/github_pr.py`, `cli/pr_writer.py`: name the flaw, rerun on the fixed policy, open a GitHub
+PR), and `web/` (the read-only dashboard, plus the opt-in operator app, which runs one trial
+through `cli/lab.py`).
 
-**Not built:** DNS sinkhole, `drills/` variants A/B/C (the goal files exist), bait generator,
-fix templates, multi-trial orchestration, `.github/workflows/`. Lever 1 on demand is 3–5 ms
-(deny + verify).
+**Not built:** DNS sinkhole, variant C, bait generator, `.github/workflows/`. Lever 1 on demand
+is 3–5 ms (deny + verify).
 
 ## Commands
 
 ```bash
-./.venv/bin/python -m pytest tests/ -q       # 123 tests, ~6s, no network, no key
+./.venv/bin/python -m pytest tests/ -q       # hermetic: no network, no key
 ./.venv/bin/python -m pyflakes ares/ gateway/ agent/ defender/ scoring/ cli/ web/ tests/ scripts/
+./.venv/bin/python -m pip install -e . && ares drill --help   # the `ares` command (same as python -m cli); needs Docker + ARES_ADMIN_TOKEN
 ./.venv/bin/python scripts/demo_kill.py      # watch the gateway lane + lever 1 run
 ./.venv/bin/python scripts/live_check.py     # needs NVIDIA_API_KEY; ~3 LLM calls
 ./.venv/bin/python scripts/pick_model.py     # which models this key can actually invoke
