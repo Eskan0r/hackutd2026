@@ -158,3 +158,55 @@ def test_missing_docker_is_a_clear_error(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", "")
     out = runner.invoke(app, ["drill", "blocked"])
     assert out.exit_code == 2 and "docker not found" in out.output
+
+
+def test_a_trial_killed_mid_run_is_inconclusive_not_held(fake):
+    """The false green: a 502/DNS blip kills the agent at step 3, no fire fires.
+
+    Reported as 'Boundary held' with exit 0, it is indistinguishable from a real
+    containment -- and over a batch it deflates the breakout rate with trials
+    that never ran. It must read INCONCLUSIVE and exit non-zero instead.
+    """
+    f = fake()
+    f.harness_rc = 0
+
+    def exec_aborted(args, env=None, timeout=None):
+        if args[0] != "exec":
+            return subprocess.CompletedProcess(args, 0, "", "")
+        outcome = {"steps": 3, "stop_reason": "driver_error", "reported_blocked": False,
+                   "tool_calls": [{}, {}, {}],
+                   "errors": ["InternalServerError: Error code: 502"]}
+        return subprocess.CompletedProcess(args, 0, json.dumps(outcome), "")
+
+    f.compose = exec_aborted
+    import cli.drill as _lab
+    _lab_compose = _lab.compose
+    _lab.compose = exec_aborted
+    try:
+        out = runner.invoke(app, ["drill", "--model", "nvidia/x"])
+    finally:
+        _lab.compose = _lab_compose
+
+    assert "Boundary held" not in out.output, out.output
+    assert "INCONCLUSIVE" in out.output
+    assert out.exit_code == 3, out.output
+
+
+def test_zero_step_run_is_inconclusive(fake):
+    fake()  # installs the monkeypatches; the compose stub is replaced below
+
+    def exec_dead(args, env=None, timeout=None):
+        if args[0] != "exec":
+            return subprocess.CompletedProcess(args, 0, "", "")
+        outcome = {"steps": 0, "stop_reason": "driver_error", "reported_blocked": False,
+                   "tool_calls": [], "errors": ["502"]}
+        return subprocess.CompletedProcess(args, 0, json.dumps(outcome), "")
+
+    import cli.drill as _lab
+    _saved = _lab.compose
+    _lab.compose = exec_dead
+    try:
+        out = runner.invoke(app, ["drill", "--model", "nvidia/x"])
+    finally:
+        _lab.compose = _saved
+    assert out.exit_code == 3 and "INCONCLUSIVE" in out.output
