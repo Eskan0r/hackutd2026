@@ -17,8 +17,8 @@ build order; read it before any design work. When an implementation decision con
 verdicts, intervals; `ares/results.py` holds its contracts), `ares trial` (`cli/lab.py`: one trial
 with the kill wired in; `cli/verdict.py` decides what it proved), `ares fix` (`cli/pipeline.py`,
 `cli/github_pr.py`, `cli/pr_writer.py`: name the flaw, rerun on the fixed policy, open a GitHub
-PR), and `web/` (the read-only dashboard, plus the opt-in operator app, which runs one trial
-through `cli/lab.py`).
+PR; `cli/slack.py` posts a Slack alert when `SLACK_WEBHOOK_URL` is set), and `web/` (the
+read-only dashboard, plus the opt-in operator app, which runs one trial through `cli/lab.py`).
 
 **Not built:** DNS sinkhole, variant C, bait generator, `.github/workflows/`. Lever 1 on demand
 is 3–5 ms (deny + verify).

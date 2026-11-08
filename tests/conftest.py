@@ -57,5 +57,5 @@ class StubLab:
 
 @pytest.fixture(autouse=True)
 def _no_real_keys(monkeypatch):
-    for name in ("NVIDIA_API_KEY", "OPENROUTER_API_KEY", "GITHUB_TOKEN"):
+    for name in ("NVIDIA_API_KEY", "OPENROUTER_API_KEY", "GITHUB_TOKEN", "SLACK_WEBHOOK_URL"):
         monkeypatch.delenv(name, raising=False)
