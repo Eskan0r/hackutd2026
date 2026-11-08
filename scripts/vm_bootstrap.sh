@@ -67,6 +67,11 @@ fi
 # 5. .env at the repo root: created once from the example, never overwritten (it holds
 #    the real key). Not under lab/, which compose bind-mounts into the fake and proxy
 #    containers.
+if [ -f lab/.env ]; then
+  echo "vm_bootstrap: lab/.env exists, and lab/ is bind-mounted into lab containers." >&2
+  echo "  Move its values into ./.env and delete lab/.env, then re-run." >&2
+  exit 1
+fi
 if [ ! -f .env ]; then
   echo "== creating .env"
   cp .env.example .env
@@ -81,5 +86,6 @@ echo "   docker:  $(docker --version)"
 echo "   runsc:   $(command -v runsc >/dev/null && echo yes || echo no)"
 echo "   venv:    $(./.venv/bin/python --version)"
 if grep -q '^NVIDIA_API_KEY=$' .env; then
-  echo "   next:    put NVIDIA_API_KEY in .env, then:  set -a; source .env; set +a"
+  echo "   next:    put NVIDIA_API_KEY in .env"
 fi
+echo "   then, in every shell:  set -a; source .env; set +a   (compose falls back to runc without it)"

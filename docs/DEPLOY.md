@@ -52,6 +52,7 @@ docker info --format '{{json .Runtimes}}' | grep -o runsc      # runsc
 docker run --rm --runtime=runsc alpine dmesg | head -1          # [ 0.000000] Starting gVisor...
 ./.venv/bin/python --version && ./.venv/bin/python -m pytest tests/ -q   # Python 3.12.x, all pass
 (cd lab && ./selftest.sh)              # last line: PASS: flaws ON leak, flaws OFF hold, no internet, events hash-chained
+docker inspect lab-sandbox-1 --format '{{.HostConfig.Runtime}}'   # runsc  (runc here means .env was not sourced)
 (cd lab && ./selftest-gateway.sh)      # gateway lane; with the key loaded this spends a few LLM calls
 ./.venv/bin/python -m defender selftest   # last line: SELFTEST PASSED (probe container runs under runsc once .env is loaded)
 sudo ss -ltnp | grep -vE '127.0.0.1|::1|:22 '   # nothing of ours on 0.0.0.0
