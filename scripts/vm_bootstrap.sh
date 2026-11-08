@@ -51,7 +51,9 @@ fi
 #    22.04 ships 3.10, so fall back to deadsnakes. python3.12-venv (ensurepip) is a
 #    separate package on both, so install it unconditionally.
 #    shortcut: deadsnakes is a third-party PPA; drop this branch once the Brev image is confirmed 24.04
-if ! command -v python3.12 >/dev/null 2>&1; then
+#    Ask apt, not `command -v`: a Brev image can carry a python3.12 binary that apt
+#    knows nothing about, and then the venv package is still missing.
+if ! apt-cache show python3.12-venv >/dev/null 2>&1; then
   echo "== installing python3.12 from deadsnakes"
   sudo apt-get install -y -q software-properties-common
   sudo add-apt-repository -y ppa:deadsnakes/ppa

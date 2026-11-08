@@ -23,7 +23,7 @@ brev shell ares-lab          # SSH in; the default user is ubuntu
 ## 3. Bootstrap (on the VM, once)
 
 ```bash
-cd ~/workspace                                   # persists across stop/start
+cd ~                                             # the home dir persists across stop/start
 git clone https://github.com/Eskan0r/hackutd2026.git && cd hackutd2026
 scripts/vm_bootstrap.sh
 ```
