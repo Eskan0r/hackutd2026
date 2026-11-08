@@ -62,6 +62,11 @@
    "frames": 4,
    "fps": 10,
    "loop": true
+  },
+  "dust": {
+   "frames": 4,
+   "fps": 6,
+   "loop": true
   }
  }
 }

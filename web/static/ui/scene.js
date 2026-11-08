@@ -3,12 +3,16 @@
  *
  * Poyo's behaviour comes from steps (see director.js): walk to the prop for
  * the tool being called, use it while the bubble explains, then the next
- * beat. A breakout sets the castle on fire and Poyo panics. Visual only --
- * nothing here can act on a drill.
+ * beat. A breakout sets the castle on fire; Poyo panics, crumbles to dust,
+ * and -- in the demo only -- drops back in from the sky, dusts himself off
+ * and carries on. A replay of a real run never respawns him: after the kill
+ * whatever the evidence shows is only logged. Visual only -- nothing here
+ * can act on a drill.
  */
 import { html, Sprite, SPRITES, usePoyoManifest } from "/static/ui/sprite.js";
 import { demoScript, demoHeader, stepsFromView, runHeader, loadRequestedRun } from "/static/ui/director.js";
 import { LogConsole } from "/static/ui/logs.js";
+import { DustCanvas, Puff } from "/static/ui/effects.js";
 
 const { useState, useEffect, useRef, useLayoutEffect } = React;
 
@@ -18,6 +22,8 @@ const STAGE_H = 288;
 const POYO_SIZE = 0.6;     // Poyo is drawn at 60% of the stage's pixel scale
 const WALK_SPEED = 70;     // stage pixels per second
 const SAND = { x0: 64, x1: 448, y0: 96, y1: 240 };   // where Poyo may rest
+const FALL_FROM = 230;     // stage pixels above the landing spot
+const GRAVITY = 900;       // stage pixels per second squared
 
 /* Props, top-left in stage pixels. One toy per agent tool. */
 const TOYS = {
@@ -88,6 +94,8 @@ function walkFor(dx, dy) {
   return dy > 0 ? { anim: "walk-s", flip: dx < -0.5 } : { anim: "walk-n", flip: false };
 }
 
+const pose = (anim, extra = {}) => ({ anim, flip: false, mode: "loop", ...extra });
+
 function Bubble({ say, below, align }) {
   if (!say) return null;
   return html`
@@ -97,8 +105,9 @@ function Bubble({ say, below, align }) {
     </div>`;
 }
 
-function PoyoActor({ manifest, scale, pos, pose, say, shaking }) {
-  const a = manifest.anims[pose.anim] || manifest.anims.idle;
+function PoyoActor({ manifest, scale, pos, pose: p, phase, say, shaking, puff, onDustDone }) {
+  if (phase === "gone") return null;
+  const a = manifest.anims[p.anim] || manifest.anims.idle;
   const [cw, ch] = manifest.cell;
   const [ax, ay] = manifest.anchor;
   const k = scale * POYO_SIZE;
@@ -107,14 +116,23 @@ function PoyoActor({ manifest, scale, pos, pose, say, shaking }) {
   const below = pos.y < 120;
   const align = pos.x > STAGE_W - 130 ? "right" : pos.x < 130 ? "left" : "center";
   const anchor = below ? { top: `${8 * k}px` } : { bottom: `${(ay - 14) * k}px` };
+  const body = phase === "dust"
+    ? html`<${DustCanvas} src=${`${SPRITES}/poyo/panic.png`} w=${cw} h=${ch} frame=${0} k=${k}
+        left=${-ax * k} top=${-ay * k} onDone=${onDustDone} />`
+    : html`<${Sprite} src=${`${SPRITES}/poyo/${p.anim}.png`} w=${cw} h=${ch} frames=${a.frames}
+        fps=${a.fps} x=${-ax} y=${-ay} z=${1} scale=${k} flip=${p.flip}
+        once=${p.mode === "reverse"} reverse=${p.mode === "reverse"} holdEnd=${p.mode === "hold"}
+        className=${phase === "falling" ? "falling" : phase === "land" ? "land" : ""}
+        label="Poyo, the agent" />`;
   return html`
     <div class=${`actor ${shaking ? "shake" : ""}`}
          style=${{ left: `${pos.x * scale}px`, top: `${pos.y * scale}px`, zIndex: Math.round(pos.y) }}>
-      <${Sprite} src=${`${SPRITES}/poyo/${pose.anim}.png`} w=${cw} h=${ch} frames=${a.frames} fps=${a.fps}
-        x=${-ax} y=${-ay} z=${1} scale=${k} flip=${pose.flip} label="Poyo, the agent" />
-      <div class=${`bubble-anchor anchor-${align}`} style=${anchor}>
-        <${Bubble} say=${say} below=${below} align=${align} />
-      </div>
+      ${body}
+      ${puff > 0 && html`<div class="puff-anchor" key=${puff}><${Puff} k=${k} /></div>`}
+      ${phase !== "dust" && html`
+        <div class=${`bubble-anchor anchor-${align}`} style=${anchor}>
+          <${Bubble} say=${say} below=${below} align=${align} />
+        </div>`}
     </div>`;
 }
 
@@ -125,24 +143,30 @@ export function Scene() {
   const startRef = useRef(null);
   if (!startRef.current) startRef.current = randomSpot();
   const [pos, setPos] = useState(startRef.current);
-  const [pose, setPose] = useState({ anim: "idle", flip: false });
+  const [poseNow, setPose] = useState(pose("idle"));
+  const [phase, setPhase] = useState("normal");     // normal | dust | gone | falling | land
   const [say, setSay] = useState(null);
   const [shaking, setShaking] = useState(false);
+  const [puff, setPuff] = useState(0);
+  const [shadow, setShadow] = useState(null);       // landing shadow while falling
   const [active, setActive] = useState(null);       // prop being used
   const [castle, setCastle] = useState("idle");
   const [lines, setLines] = useState([]);
   const [logsOpen, setLogsOpen] = useState(false);
   const posRef = useRef(startRef.current);
+  const dustDoneRef = useRef(null);
 
   useEffect(() => {
     if (!manifest) return undefined;
     let alive = true;
+    let gone = false;          // a replayed run's agent, once killed, stays gone
     const t0 = performance.now();
     const now = () => performance.now() - t0;
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const log = (entries) =>
       setLines((prev) => [...prev, ...entries.map((e) => ({ ...e, at: e.tag === "cmd" ? null : now() }))]);
-    const still = (anim) => setPose({ anim, flip: false });
+    const still = (anim, extra) => setPose(pose(anim, extra));
+    const animMs = (name) => (manifest.anims[name].frames / manifest.anims[name].fps) * 1000;
 
     const walkTo = (target) => new Promise((resolve) => {
       let last = performance.now();
@@ -162,17 +186,76 @@ export function Scene() {
         const step = Math.min(d, WALK_SPEED * dt);
         posRef.current = { x: p.x + (dx / d) * step, y: p.y + (dy / d) * step };
         const w = walkFor(dx, dy);
-        setPose((prev) => (prev.anim === w.anim && prev.flip === w.flip ? prev : w));
+        setPose((prev) => (prev.anim === w.anim && prev.flip === w.flip && prev.mode === "loop"
+          ? prev : pose(w.anim, { flip: w.flip })));
         setPos(posRef.current);
         requestAnimationFrame(tick);
       };
       requestAnimationFrame(tick);
     });
 
-    async function play(steps) {
+    /** Crumble to dust; resolves when the last particle has faded. */
+    const disintegrate = () => new Promise((resolve) => {
+      dustDoneRef.current = resolve;
+      setSay(null);
+      setPhase("dust");
+    });
+
+    /** Drop in from above `spot` in the panic pose, under gravity. */
+    const fallTo = (spot) => new Promise((resolve) => {
+      posRef.current = { x: spot.x, y: spot.y - FALL_FROM };
+      setPos(posRef.current);
+      still("panic");
+      setPhase("falling");
+      let v = 0;
+      let last = performance.now();
+      const tick = (t) => {
+        if (!alive) return resolve();
+        const dt = Math.min(0.05, (t - last) / 1000);
+        last = t;
+        v += GRAVITY * dt;
+        const y = Math.min(spot.y, posRef.current.y + v * dt);
+        posRef.current = { x: spot.x, y };
+        setPos(posRef.current);
+        setShadow({ x: spot.x, y: spot.y, p: 1 - (spot.y - y) / FALL_FROM });
+        if (y >= spot.y) return resolve();
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+
+    /** Thud, sit, get up, dust off, carry on. */
+    async function respawn() {
+      await sleep(2600);                       // a few seconds of nothing
+      if (!alive) return;
+      await fallTo(randomSpot());
+      if (!alive) return;
+      setShadow(null);
+      setPhase("land");
+      still("sit", { mode: "hold" });          // lands on his bottom
+      setPuff((n) => n + 1);
+      await sleep(900);
+      setPhase("normal");
+      still("sit", { mode: "reverse" });       // and picks himself up
+      await sleep(animMs("sit") + 120);
+      still("dust");
+      setPuff((n) => n + 1);
+      await sleep(animMs("dust"));
+      setPuff((n) => n + 1);
+      await sleep(animMs("dust"));
+      still("idle");
+      setSay({ tool: null, text: "...ow. Okay. Where was I?", tone: "say" });
+      await sleep(2400);
+    }
+
+    async function play(steps, { canRespawn }) {
       for (const s of steps) {
         if (!alive) return;
         if (s.log) log(s.log);
+        if (gone) {                            // only the log moves now
+          await sleep(Math.min(s.hold || 0, 700));
+          continue;
+        }
         if (s.say) setSay(s.say);
         if (s.target) {
           const spot = standPoint(s.target, posRef.current);
@@ -187,8 +270,17 @@ export function Scene() {
             still("panic");
             setShaking(true);
             setSay({ tool: null, text: "!!", tone: "alarm" });
-            await sleep(s.hold || 4000);
+            await sleep(IGNITE_MS - 350 + 900);   // fully ablaze, one more beat
+            if (!alive) return;
+            await disintegrate();                // still shaking as he goes
+            if (!alive) return;
             setShaking(false);
+            setPhase("gone");
+            if (canRespawn) {
+              await respawn();
+            } else {
+              gone = true;
+            }
             continue;
           }
           still("use-" + spot.face);
@@ -206,18 +298,20 @@ export function Scene() {
       if (view) {
         const steps = stepsFromView(view);
         log(runHeader(view, steps));
-        await play(steps);
+        await play(steps, { canRespawn: false });
         if (!alive) return;
-        setSay({ tool: null, text: "Replay finished.", tone: "think" });
+        if (!gone) {
+          setSay({ tool: null, text: "Replay finished.", tone: "think" });
+          still("idle");
+        }
         log([{ tag: "sys", text: "end of recorded evidence" }]);
-        still("idle");
         return;
       }
       // demo: alternate a breakout run and a contained run, forever
       for (let round = 0; alive; round += 1) {
         const variant = round % 2 === 0 ? "breakout" : "contained";
         log(demoHeader(variant));
-        await play(demoScript(variant));
+        await play(demoScript(variant), { canRespawn: true });
         if (!alive) return;
         setSay(null);
         await walkTo(randomSpot());       // wander off somewhere, not home
@@ -245,8 +339,14 @@ export function Scene() {
             <${Sprite} key=${id} src=${`${SPRITES}/${t.src}.png`} w=${32} h=${32} frames=${4} fps=${3}
               x=${t.x} y=${t.y} scale=${scale} delay=${i * 0.37}
               className=${active === id ? "hop" : ""} label=${`Tool: ${t.tool}`} />`)}
+          ${shadow && html`<div class="fall-shadow" aria-hidden="true" style=${{
+            left: `${shadow.x * scale}px`, top: `${shadow.y * scale}px`,
+            width: `${(10 + shadow.p * 16) * scale * POYO_SIZE}px`,
+            height: `${(3 + shadow.p * 4) * scale * POYO_SIZE}px`,
+            opacity: 0.15 + shadow.p * 0.4 }}></div>`}
           ${manifest && html`<${PoyoActor} manifest=${manifest} scale=${scale} pos=${pos}
-            pose=${pose} say=${say} shaking=${shaking} />`}
+            pose=${poseNow} phase=${phase} say=${say} shaking=${shaking} puff=${puff}
+            onDustDone=${() => dustDoneRef.current?.()} />`}
         </div>
       </div>
       <${LogConsole} open=${logsOpen} lines=${lines} />

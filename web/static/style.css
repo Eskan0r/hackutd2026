@@ -128,6 +128,45 @@ img { image-rendering: pixelated; user-select: none; }
   75% { translate: var(--px) 0; }
 }
 
+/* --- the knock-out and comeback ------------------------------------------ */
+
+.dust { position: absolute; pointer-events: none; }
+
+/* stretched tall while falling, squashed flat on landing -- from the feet */
+.sprite.falling { scale: 0.86 1.16; transform-origin: 50% 100%; }
+.sprite.land { transform-origin: 50% 100%; animation: land 420ms steps(6) 1; }
+@keyframes land {
+  0%   { scale: 1.3 0.7; }
+  40%  { scale: 0.9 1.12; }
+  70%  { scale: 1.06 0.95; }
+  100% { scale: 1 1; }
+}
+
+/* the landing shadow grows as he gets closer */
+.fall-shadow {
+  position: absolute;
+  translate: -50% -50%;
+  background: #8f6a45;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.puff-anchor { position: absolute; left: 0; top: 0; z-index: 2; }
+.puff span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--s);
+  height: var(--s);
+  background: var(--c);
+  animation: puff 520ms steps(6) forwards;
+}
+@keyframes puff {
+  from { translate: 0 0; opacity: 1; }
+  to   { translate: var(--dx) var(--dy); opacity: 0; }
+}
+
 .bubble-anchor {
   position: absolute;
   left: 0;

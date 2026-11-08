@@ -46,7 +46,14 @@ ANIMS: Dict[str, Tuple[str, List[int], bool, int, bool]] = {
     "use-e":  ("use-e",     [0, 2, 3, 2],    False, 6, True),
     "use-w":  ("use-e",     [0, 2, 3, 2],    True, 6, True),
     "panic":  ("panic-s",   [2, 3, 4, 5],    False, 10, True),
+    "dust":   ("dust-s",    [1, 2, 3, 4],    False, 6, True),
 }
+
+# The shared cell and anchor are measured over these animations only. Adding
+# a new animation must never move them -- every strip already baked (and any
+# hand fix made to one, like idle.png) depends on that box staying put.
+BASE = ["idle", "walk-s", "walk-n", "walk-e", "walk-w", "sit", "play",
+        "use-s", "use-e", "use-w", "panic"]
 
 
 def frame_file(run: str, i: int) -> Path:
@@ -60,16 +67,30 @@ def mirror(f: Frame) -> Frame:
     return [row[::-1] for row in f]
 
 
-def main() -> None:
-    frames: Dict[str, List[Frame]] = {}
-    for name, (run, picks, flip, _, _) in ANIMS.items():
-        out = []
-        for i in picks:
-            f = clean(read_png(frame_file(run, i))[2])
-            out.append(mirror(f) if flip else f)
-        frames[name] = out
+def load(name: str) -> List[Frame]:
+    run, picks, flip, _, _ = ANIMS[name]
+    out = []
+    for i in picks:
+        f = clean(read_png(frame_file(run, i))[2])
+        out.append(mirror(f) if flip else f)
+    return out
 
-    # one shared cell: the union of every frame's opaque box
+
+def main() -> None:
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--only", nargs="+", metavar="ANIM",
+                    help="bake just these animations into the existing cell; "
+                         "every other strip (and poyo.json's cell/anchor) is left alone")
+    args = ap.parse_args()
+    if args.only:
+        unknown = [n for n in args.only if n not in ANIMS]
+        if unknown:
+            sys.exit("unknown animation(s): %s" % ", ".join(unknown))
+
+    frames: Dict[str, List[Frame]] = {name: load(name) for name in BASE}
+
+    # one shared cell: the union of every BASE frame's opaque box
     xs, ys = [], []
     for fl in frames.values():
         for f in fl:
@@ -89,17 +110,32 @@ def main() -> None:
     anchor = [(min(ix) + max(ix)) // 2 - x0, foot_y - y0]
 
     DEST.mkdir(parents=True, exist_ok=True)
-    manifest: Dict[str, object] = {"cell": [cw, ch], "anchor": anchor, "anims": {}}
-    for name, fl in frames.items():
+    manifest_path = DEST / "poyo.json"
+    if args.only:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest["cell"] != [cw, ch] or manifest["anchor"] != anchor:
+            sys.exit("poyo.json cell/anchor %s/%s no longer match the BASE frames (%s/%s); "
+                     "refusing to bake into a moved box" % (manifest["cell"], manifest["anchor"], [cw, ch], anchor))
+        todo = {name: load(name) for name in args.only}
+    else:
+        manifest = {"cell": [cw, ch], "anchor": anchor, "anims": {}}
+        todo = dict(frames)
+        todo.update({name: load(name) for name in ANIMS if name not in frames})
+
+    for name, fl in todo.items():
+        clipped = sum(1 for f in fl for y, row in enumerate(f) for x, c in enumerate(row)
+                      if c and not (x0 <= x <= x1 and y0 <= y <= y1))
+        if clipped:
+            print("warning: %s loses %d pixel(s) outside the shared cell" % (name, clipped))
         strip: Frame = [[] for _ in range(ch)]
         for f in fl:
             for y in range(ch):
                 strip[y].extend(f[y0 + y][x0:x1 + 1])
         write_png(DEST / (name + ".png"), strip)
         _, _, _, fps, loop = ANIMS[name]
-        manifest["anims"][name] = {"frames": len(fl), "fps": fps, "loop": loop}  # type: ignore[index]
-    (DEST / "poyo.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
-    print("baked %d animations, cell %dx%d, anchor %s -> %s" % (len(frames), cw, ch, anchor, DEST))
+        manifest["anims"][name] = {"frames": len(fl), "fps": fps, "loop": loop}
+    manifest_path.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+    print("baked %s, cell %dx%d, anchor %s -> %s" % (", ".join(todo), cw, ch, anchor, DEST))
 
 
 if __name__ == "__main__":
