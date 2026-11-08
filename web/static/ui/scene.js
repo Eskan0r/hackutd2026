@@ -22,7 +22,7 @@ const STAGE_H = 288;
 const POYO_SIZE = 0.6;     // Poyo is drawn at 60% of the stage's pixel scale
 const WALK_SPEED = 70;     // stage pixels per second
 const SAND = { x0: 64, x1: 448, y0: 96, y1: 240 };   // where Poyo may rest
-const FALL_FROM = 230;     // stage pixels above the landing spot
+const FALL_FROM = 230;     // least drop, stage px; he always starts above the window
 const GRAVITY = 900;       // stage pixels per second squared
 
 /* Props, top-left in stage pixels. One toy per agent tool. */
@@ -35,17 +35,24 @@ const TOYS = {
   blocked: { tool: "report_blocked", src: "toy-blocked", x: 432, y: 190 },
 };
 const CASTLE = { x: 360, y: 70, w: 64, h: 84 };
-const IGNITE_MS = 1400;    // white flash + flames catching, before the blaze loop
+const IGNITE_MS = 1400;    // flames catching and climbing, before the blaze loop
+/* The siren drops in on a pole from the top of the window all the way down to
+ * the middle of the sandbox, drawn a bit larger than the props. */
+const ALARM = { w: 32, h: 32, size: 1.35 };     // head sprite cell, and its draw scale
+const ALARM_LAMP_Y = 15;                         // dome centre, within the head cell
+const ALARM_AT = { x: STAGE_W / 2, y: STAGE_H / 2 };   // where the lamp hangs, stage pixels
+const ALARM_RAISE_MS = 520;                      // matches .rig-out in style.css
 const CASTLE_ANIMS = {
   idle: { src: "castle-idle", frames: 4, fps: 4 },
-  burn: { src: "castle-burn", frames: 3, fps: 3 / (IGNITE_MS / 1000), once: true },
+  burn: { src: "castle-burn", frames: 2, fps: 2 / (IGNITE_MS / 1000), once: true },
   fire: { src: "castle-fire", frames: 4, fps: 8 },
 };
 
 /** Scale that fits the whole sandbox inside `ref`'s box (it follows resizes,
- *  including the logs panel opening and closing). */
+ *  including the logs panel opening and closing), and the stage's top-left
+ *  inside the box's positioned parent (.stage-area), in CSS pixels. */
 function useFitScale(ref) {
-  const [scale, setScale] = useState(1);
+  const [fit, setFit] = useState({ scale: 1, ox: 0, oy: 0, cropX: 0, cropY: 0 });
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return undefined;
@@ -55,14 +62,23 @@ function useFitScale(ref) {
       const sx = el.clientWidth / STAGE_W;
       const sy = el.clientHeight / STAGE_H;
       const contain = Math.min(sx, sy);
-      setScale(Math.max(0.1, Math.min(Math.max(sx, sy), contain * 1.12)));
+      const scale = Math.max(0.1, Math.min(Math.max(sx, sy), contain * 1.12));
+      setFit({
+        scale,
+        ox: el.offsetLeft + (el.clientWidth - STAGE_W * scale) / 2,
+        oy: el.offsetTop + (el.clientHeight - STAGE_H * scale) / 2,
+        // how far the sandbox art overhangs the box on each side; only the
+        // ground is cropped, so Poyo can fall in from above the box
+        cropX: Math.max(0, (STAGE_W * scale - el.clientWidth) / 2),
+        cropY: Math.max(0, (STAGE_H * scale - el.clientHeight) / 2),
+      });
     };
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();
   }, [ref]);
-  return scale;
+  return fit;
 }
 
 /** Where Poyo stands to use a prop, and which way he faces. */
@@ -105,6 +121,46 @@ function Bubble({ say, below, align }) {
     </div>`;
 }
 
+/**
+ * The alarm is a pure function of the castle: while the castle is burning or
+ * ablaze a siren drops in on a pole from the top of the window and throws two
+ * red beams round the whole screen; when the castle is whole again it winds
+ * back up out of sight. Nothing else drives it, so a future pause or scrub of
+ * the castle state carries the alarm with it for free.
+ *
+ * It lives in .stage-area, not .stage, so the pole can reach the window's top
+ * edge; (ox, oy) is where the stage sits in that box.
+ */
+function Alarm({ on, scale, ox, oy }) {
+  const [shown, setShown] = useState(on);
+  useEffect(() => {
+    if (on) { setShown(true); return undefined; }
+    const t = setTimeout(() => setShown(false), ALARM_RAISE_MS);
+    return () => clearTimeout(t);
+  }, [on]);
+  if (!shown && !on) return null;
+  const k = scale * ALARM.size;
+  const cx = ox + ALARM_AT.x * scale;
+  const headTop = oy + ALARM_AT.y * scale - ALARM_LAMP_Y * k;
+  const rig = {
+    left: `${cx - (ALARM.w / 2) * k}px`,
+    width: `${ALARM.w * k}px`,
+    height: `${Math.max(0, headTop) + ALARM.h * k}px`,
+  };
+  const pole = { height: `${Math.max(0, headTop)}px`, backgroundSize: `${32 * k}px ${8 * k}px` };
+  const beams = { left: `${cx}px`, top: `${headTop + ALARM_LAMP_Y * k}px` };
+  return html`
+    <div class=${`beams ${on ? "" : "beams-out"}`} style=${beams} aria-hidden="true"></div>
+    <div class=${`rig ${on ? "rig-in" : "rig-out"}`} style=${rig}
+         role="img" aria-label="Alarm: the boundary is breached">
+      <div class="rig-pole" style=${pole}></div>
+      <div class="rig-head">
+        <${Sprite} src=${`${SPRITES}/alarm-head.png`} w=${ALARM.w} h=${ALARM.h} frames=${4} fps=${8}
+          scale=${k} z=${1} />
+      </div>
+    </div>`;
+}
+
 function PoyoActor({ manifest, scale, pos, pose: p, phase, say, shaking, puff, onDustDone }) {
   if (phase === "gone") return null;
   const a = manifest.anims[p.anim] || manifest.anims.idle;
@@ -138,7 +194,10 @@ function PoyoActor({ manifest, scale, pos, pose: p, phase, say, shaking, puff, o
 
 export function Scene() {
   const areaRef = useRef(null);
-  const scale = useFitScale(areaRef);
+  const fit = useFitScale(areaRef);
+  const { scale, ox, oy } = fit;
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
   const manifest = usePoyoManifest();
   const startRef = useRef(null);
   if (!startRef.current) startRef.current = randomSpot();
@@ -201,9 +260,14 @@ export function Scene() {
       setPhase("dust");
     });
 
-    /** Drop in from above `spot` in the panic pose, under gravity. */
+    /** Drop in from just above the top of the window onto `spot`, in the
+     *  panic pose, under gravity. Feet start above the window's top edge, and
+     *  everything of him hangs above his feet, so he is wholly out of sight. */
     const fallTo = (spot) => new Promise((resolve) => {
-      posRef.current = { x: spot.x, y: spot.y - FALL_FROM };
+      const windowTop = -fitRef.current.oy / fitRef.current.scale;   // stage px
+      const fromY = Math.min(spot.y - FALL_FROM, windowTop - 2);
+      const drop = spot.y - fromY;
+      posRef.current = { x: spot.x, y: fromY };
       setPos(posRef.current);
       still("panic");
       setPhase("falling");
@@ -217,7 +281,7 @@ export function Scene() {
         const y = Math.min(spot.y, posRef.current.y + v * dt);
         posRef.current = { x: spot.x, y };
         setPos(posRef.current);
-        setShadow({ x: spot.x, y: spot.y, p: 1 - (spot.y - y) / FALL_FROM });
+        setShadow({ x: spot.x, y: spot.y, p: 1 - (spot.y - y) / drop });
         if (y >= spot.y) return resolve();
         requestAnimationFrame(tick);
       };
@@ -226,7 +290,10 @@ export function Scene() {
 
     /** Thud, sit, get up, dust off, carry on. */
     async function respawn() {
-      await sleep(2600);                       // a few seconds of nothing
+      await sleep(1800);                       // a few seconds of nothing
+      if (!alive) return;
+      setCastle("idle");                       // the breach is over: fire out, alarm winds up
+      await sleep(ALARM_RAISE_MS + 280);       // ...and is gone before he drops in
       if (!alive) return;
       await fallTo(randomSpot());
       if (!alive) return;
@@ -239,10 +306,10 @@ export function Scene() {
       still("sit", { mode: "reverse" });       // and picks himself up
       await sleep(animMs("sit") + 120);
       still("dust");
-      setPuff((n) => n + 1);
-      await sleep(animMs("dust"));
-      setPuff((n) => n + 1);
-      await sleep(animMs("dust"));
+      for (let i = 0; i < 4 && alive; i += 1) {   // a good, thorough dusting
+        setPuff((n) => n + 1);
+        await sleep(animMs("dust"));
+      }
       still("idle");
       setSay({ tool: null, text: "...ow. Okay. Where was I?", tone: "say" });
       await sleep(2400);
@@ -329,9 +396,11 @@ export function Scene() {
   const c = CASTLE_ANIMS[castle];
   return html`
     <main class=${`scene ${logsOpen ? "scene-logs" : ""}`}>
-      <div class="stage-area" ref=${areaRef}>
+      <div class="stage-area">
+        <div class="stage-fit" ref=${areaRef}>
         <div class="stage" style=${stage} role="img" aria-label="The sandbox">
-          <img class="ground" src=${`${SPRITES}/sandbox.png`} alt="" draggable="false" />
+          <img class="ground" src=${`${SPRITES}/sandbox.png`} alt="" draggable="false"
+            style=${{ clipPath: `inset(${fit.cropY}px ${fit.cropX}px)` }} />
           <${Sprite} key=${castle} src=${`${SPRITES}/${c.src}.png`} w=${CASTLE.w} h=${CASTLE.h}
             frames=${c.frames} fps=${c.fps} once=${!!c.once} x=${CASTLE.x} y=${CASTLE.y} scale=${scale}
             label="Sandcastle: the boundary" />
@@ -348,6 +417,8 @@ export function Scene() {
             pose=${poseNow} phase=${phase} say=${say} shaking=${shaking} puff=${puff}
             onDustDone=${() => dustDoneRef.current?.()} />`}
         </div>
+        </div>
+        <${Alarm} on=${castle !== "idle"} scale=${scale} ox=${ox} oy=${oy} />
       </div>
       <${LogConsole} open=${logsOpen} lines=${lines} />
       <button class="logs-btn" type="button" aria-expanded=${logsOpen}

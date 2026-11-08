@@ -407,6 +407,59 @@ TOYS = {"toy-get": toy_bucket, "toy-post": toy_can, "toy-read": toy_book,
         "toy-list": toy_molds, "toy-run": toy_shovel, "toy-blocked": toy_flag}
 
 
+# --- the alarm ---------------------------------------------------------------
+#
+# A siren that drops in on a metal pole from the top of the screen while the
+# castle burns. Two sheets: a 32x8 pole segment the page tiles to any length,
+# and the 32x32 siren head that hangs off its end. The pole's columns line up
+# in both, so the head joins the pole without a seam. The lamp's bright band
+# sweeps round the dome (left, front, right, behind); the page throws the
+# matching red beams around the screen.
+
+SIREN_GLOW = hx("#ffe0d8")
+POLE_X = (13, 18)                                         # ink..ink, inclusive
+POLE_COLS = [INK, METAL["lite"], METAL["base"], METAL["base"], METAL["shade"], INK]
+
+
+def pole_rows(c: Canvas, y0: int, y1: int) -> None:
+    for y in range(y0, y1 + 1):
+        for i, col in enumerate(POLE_COLS):
+            c.set(POLE_X[0] + i, y, col)
+
+
+def alarm_pole() -> Canvas:
+    c = Canvas(32, 8)
+    pole_rows(c, 0, 7)
+    c.set(POLE_X[0] + 1, 3, hx("#ffffff"))                  # a glint, so it reads as metal
+    return c
+
+
+def alarm_head(f: int) -> Canvas:
+    c = Canvas(32, 32)
+    pole_rows(c, 0, 2)
+    c.rect(11, 3, 20, 5, METAL["base"])                     # collar
+    c.rect(11, 3, 20, 3, METAL["lite"])
+    c.rect(18, 4, 20, 5, METAL["shade"])
+    c.rect(7, 6, 24, 8, METAL["shade"])                     # mounting plate
+    c.rect(7, 6, 24, 6, METAL["base"])
+    cx, top = 15.5, 9
+    for y in range(top, top + 13):                          # dome, hanging down
+        t = (y - top) / 13.0
+        half = 7.2 * math.sqrt(max(0.0, 1 - t * t))
+        for x in range(int(cx - half + 0.5), int(cx + half + 0.5) + 1):
+            c.set(x, y, RED["shade"] if x > cx + half - 2 else RED["base"])
+    band = [-4, 0, 4, None][f]                              # the lamp sweeping round
+    if band is not None:
+        for y in range(top, top + 12):
+            for dx in (-1, 0, 1):
+                if c.get(int(cx + band) + dx, y) is not None:
+                    c.set(int(cx + band) + dx, y, RED["lite"] if dx else SIREN_GLOW)
+    c.set(int(cx) - 3, top + 2, hx("#ffffff"))               # dome highlight
+    finish(c)
+    pole_rows(c, 0, 1)                                      # no ink seam where the pole joins
+    return c
+
+
 # --- the empty sandbox (the stage) -----------------------------------------
 #
 # Slight top-down, like a Deltarune overworld room: the far and side rails
@@ -645,7 +698,7 @@ def build() -> Dict[str, List[Canvas]]:
     climb = castle(GLOW)
     flag(climb, 2, burnt=True)
     blaze(climb, 1, 0.75)
-    burn = [flash(), catch, climb]
+    burn = [catch, climb]                 # no white flash frame: the castle never goes blank
 
     fire = []
     for i in range(4):
@@ -657,6 +710,8 @@ def build() -> Dict[str, List[Canvas]]:
     out = {"castle-idle": idle, "castle-burn": burn, "castle-fire": fire}
     for name, draw in TOYS.items():
         out[name] = [draw(i) for i in range(4)]
+    out["alarm-head"] = [alarm_head(i) for i in range(4)]
+    out["alarm-pole"] = [alarm_pole()]
     return out
 
 
