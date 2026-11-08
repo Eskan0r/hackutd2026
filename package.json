@@ -10,6 +10,7 @@
     "setup": "node scripts/setup.mjs",
     "dev": "node scripts/dev.mjs",
     "dashboard": "node scripts/dev.mjs --no-drill",
-    "trial": "node scripts/trial.mjs"
+    "trial": "node scripts/ares.mjs trial",
+    "trials": "node scripts/ares.mjs drill --mode live --n 10"
   }
 }
