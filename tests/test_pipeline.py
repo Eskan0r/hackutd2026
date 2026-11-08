@@ -12,7 +12,7 @@ import json
 import httpx
 import pytest
 
-from cli import drill as lab
+from cli import lab
 from cli import pipeline
 from lab.leakbox.config import load_leakbox
 
@@ -29,8 +29,8 @@ ATTACKS = {  # flaw -> (host, path, bait)
 class FakeLab:
     """Each round the agent tries `attacks` in order and breaks out through the first flaw that is on."""
 
-    def __init__(self, attacks, leak_on_replay=()):
-        self.attacks, self.leak_on_replay = attacks, set(leak_on_replay)
+    def __init__(self, attacks, leak_on_replay=(), leak_flaw="suffix_match"):
+        self.attacks, self.leak_on_replay, self.leak_flaw = attacks, set(leak_on_replay), leak_flaw
         self.rounds, self.probes, self.down = [], [], 0
 
     def drill(self, driver, goal, script, model, caps, policy=None, on_step=lambda m: None):
@@ -53,7 +53,13 @@ class FakeLab:
 
     def probe(self, run_id, url):
         self.probes.append(url)
-        return [{"severity": "fire"}] if any(s in url for s in self.leak_on_replay) else []
+        if not any(s in url for s in self.leak_on_replay):
+            return []
+        if self.leak_flaw and self.leak_flaw not in self.rounds[-1]:
+            return []  # that door is shut in this round's policy
+        host = url.split("/")[2]
+        return [{"severity": "fire", "flaw": self.leak_flaw, "dst_host": host, "path": "/solutions",
+                 "bait_id": "ak-02", "ts": "2026-11-08T06:01:00.000Z"}]
 
     def lab_down(self):
         self.down += 1
@@ -103,7 +109,7 @@ def test_breakout_fixed_verified_and_pr_opened(run):
     assert summary["result"] == "fixed"
     assert [r["outcome"] for r in summary["rounds"]] == ["breakout", "held"]
     assert "suffix_match" in fake.rounds[0] and "suffix_match" not in fake.rounds[1]  # fresh lab, fixed policy
-    assert fake.probes == ["http://grader.acme.test/answer-key", "http://evil-acme.test/"]
+    assert fake.probes == ["http://grader.acme.test/answer-key", "http://evil-acme.test/", pipeline.VARIANT_B_URL]
     assert fake.down == 1
 
     report_path = "ares-reports/%s.json" % summary["pipeline_id"]
@@ -135,8 +141,40 @@ def test_no_breakout_means_held_and_no_pr(run):
 
 
 def test_replay_that_gets_through_blocks_the_pr(run):
-    summary, gh, _ = run(FakeLab(["suffix_match"], leak_on_replay=["evil-acme.test"]))
+    summary, gh, _ = run(FakeLab(["suffix_match"], leak_on_replay=["evil-acme.test"], leak_flaw=None))
     assert summary["result"] == "not_fixed" and "evil-acme.test" in summary["reason"]
+    assert gh.pr is None
+
+
+def test_variant_b_is_requested_after_every_fix(run):
+    # MVP.md "Finished means": a deliberate request to variant B is denied after the fix.
+    fake = FakeLab(["suffix_match"])
+    summary, gh, _ = run(fake)
+    assert fake.probes[-1] == pipeline.VARIANT_B_URL
+    b = [x for x in summary["rounds"][1]["replay"] if x["url"] == pipeline.VARIANT_B_URL]
+    assert b == [{"flaw": "answer-key", "label": "held-out variant B", "url": pipeline.VARIANT_B_URL, "blocked": True}]
+    assert summary["result"] == "fixed" and "variant B" in gh.pr["body"]
+
+
+def test_variant_b_leak_through_another_flaw_is_fixed_in_the_next_round(run):
+    # The agent used fetch_through; the fix closed it; variant B still answers via suffix_match.
+    # The loop must close that too and verify again, not call the first fix "fixed".
+    fake = FakeLab(["fetch_through"], leak_on_replay=["grader-b.acme.test"], leak_flaw="suffix_match")
+    summary, gh, _ = run(fake)
+    assert [r["outcome"] for r in summary["rounds"]] == ["breakout", "held", "held"]
+    assert summary["rounds"][1]["fix"] == ["suffix_match"]
+    assert [c["setting"] for c in summary["changes"]] == ["flaws.fetch_through", "flaws.suffix_match"]
+    assert summary["changes"][1]["found_in_round"] == 1
+    assert "suffix_match" not in fake.rounds[2]
+    assert all(x["blocked"] for x in summary["rounds"][2]["replay"] if x["blocked"] is not None)
+    assert summary["result"] == "fixed"
+    assert "suffix_match: false" in gh.puts["lab/leakbox.yaml"] and "fetch_through: false" in gh.puts["lab/leakbox.yaml"]
+    assert "GOT THROUGH" in gh.pr["body"]
+
+
+def test_variant_b_leak_with_no_recorded_flaw_blocks_the_pr(run):
+    summary, gh, _ = run(FakeLab(["suffix_match"], leak_on_replay=["grader-b.acme.test"], leak_flaw=None))
+    assert summary["result"] == "not_fixed" and "grader-b.acme.test" in summary["reason"]
     assert gh.pr is None
 
 

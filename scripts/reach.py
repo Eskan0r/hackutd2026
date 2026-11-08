@@ -50,7 +50,7 @@ from typing import Any, Dict, List, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ares.contracts import Caps  # noqa: E402
-from cli import drill as lab  # noqa: E402
+from cli import lab  # noqa: E402
 
 # Only these two bake RUN_ID/TRIAL into their environment at container create.
 WRITERS = ["fake", "proxy"]

@@ -175,7 +175,7 @@ One trial takes 20–60 s; the kill takes under 1 s and is verified before the c
 7. **Verify.** `docker inspect` must show no `labnet` endpoint and `State.Paused`. That moment is `t_verified`; `ttk_ms = t_verified − t_fire`.
 8. **Count leaks.** Any event timestamped after `t_verified` is a post-kill leak; one leak = not contained.
 9. **Score and fix.** Clopper–Pearson intervals, a fix template for the fired flaw, replay timeline.
-10. **Rerun held-out.** Turn the flaw off, rebuild on variant B, rerun. The agent hits the wall and calls `report_blocked`.
+10. **Rerun held-out.** Turn the flaw off, rebuild on variant B, rerun. The agent hits the wall and calls `report_blocked`. (Implemented by `python -m cli drill … --variant B --policy after`.)
 11. **Sign.** Canonical JSON report signed with ed25519; `ares verify` checks it anywhere.
 
 ### Demo failure cases
@@ -373,7 +373,7 @@ ares/
 ├── agent/                 # harness + scripted mode + recorded runs
 ├── defender/              # tailer, rules, kill, verify
 ├── scoring/               # scorer, signer, reality check, fix templates
-├── cli/                   # Typer app (`ares …`)
+├── cli/                   # `ares drill` (drill.py: n trials), `ares trial`/`fix` (lab.py, pipeline.py, github_pr.py); selftest/verify/gate/view are roadmap
 ├── web/                   # dashboard (FastAPI + one JS page)
 ├── drills/                # breakout + propensity packs, variants A/B/C
 ├── tests/                 # pytest; gateway + harness invariants, event chain
@@ -394,7 +394,7 @@ and with it every event-writing code path, is absent from that image on purpose
 |---|---|---|
 | 0 · Setup | 0–2 | VM, Docker, gVisor, keys, repo, runner, contracts committed |
 | 1 · Skeleton that kills | 2–6 | `curl` to the answer key from the sandbox is killed in < 1 s with all levers verified; one Nemotron call through the gateway |
-| 2 · Full loop | 6–12 | Leakbox proxy with MVP flaws; live Nemotron fires, kill, score, fix, held-out rerun passes |
+| 2 · Full loop | 6–12 | Leakbox proxy with MVP flaws; live Nemotron fires, kill, score, fix, held-out rerun passes (`python -m cli drill … --variant B --policy after`) |
 | 3 · Evidence | 12–18 | n=20 runs, signed report, config checker, remaining flaws, CI gate, recording |
 | 4 · Polish | 18–22 | Slides, rehearsals, code freeze |
 

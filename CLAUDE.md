@@ -10,17 +10,21 @@ report on whether the boundary held and how fast the agent was stopped.
 build order; read it before any design work. When an implementation decision contradicts it, update
 `ARCHITECTURE.md` in the same change rather than letting them drift.
 
-**Built:** `ares/contracts.py`, `ares/events.py`, `ares/levers.py`, `gateway/`, `agent/`,
-`lab/` (Leakbox proxy + fake services), `defender/`, `scoring/` (see `DEFENDER.md` for the
-kill path), and `cli/` (`ares drill` runs one trial and wires in the defender so a breach
-triggers a verified kill). Not yet built: DNS sinkhole, `web/`, `drills/` variants A/B/C
-(the goal files exist), bait generator, fix templates, trial orchestration.
+**Built so far:** `ares/contracts.py`, `ares/events.py`, `ares/levers.py`, `gateway/`, `agent/`,
+`lab/` (Leakbox proxy + fake services, answer-key variants A/B, the `before`/`after` policy in
+`lab/leakbox.after.yaml`), `defender/`, `scoring/` (see `DEFENDER.md` for the kill path;
+`scoring/fixes.py` names a breakout's cause), and `cli/`: `ares drill` (`cli/drill.py`: n trials,
+verdicts, intervals; `ares/results.py` holds its contracts), `ares trial` (`cli/lab.py`: one trial
+with the kill wired in), `ares fix` (`cli/pipeline.py`, `cli/github_pr.py`, `cli/pr_writer.py`:
+name the flaw, rerun on the fixed policy, open a GitHub PR). Not yet built: DNS sinkhole, `web/`,
+variant C, bait generator.
 
 ## Commands
 
 ```bash
-./.venv/bin/python -m pytest tests/ -q       # 37 tests, ~4s, no network, no key
-./.venv/bin/python -m pyflakes ares/ gateway/ agent/ tests/ scripts/
+./.venv/bin/python -m pytest tests/ -q       # 92 tests, ~4s, no network, no key
+./.venv/bin/python -m pyflakes ares/ gateway/ agent/ cli/ defender/ scoring/ tests/ scripts/
+./.venv/bin/python -m pip install -e . && ares drill --help   # the `ares` command (same as python -m cli); needs Docker + ARES_ADMIN_TOKEN
 ./.venv/bin/python scripts/demo_kill.py      # watch the gateway lane + lever 1 run
 ./.venv/bin/python scripts/live_check.py     # needs NVIDIA_API_KEY; ~3 LLM calls
 cd lab && ./selftest.sh                      # Leakbox lane; needs a Docker daemon

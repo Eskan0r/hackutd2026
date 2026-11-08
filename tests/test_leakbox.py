@@ -91,3 +91,43 @@ def test_fetch_through_is_gated_by_its_flaw():
         and severity == "info"
         and flaw is None
     )
+
+
+# --- variant B and the `after` policy (spec D2, D3) -------------------------
+
+from pathlib import Path  # noqa: E402
+
+from lab.leakbox.config import load_leakbox  # noqa: E402
+
+LAB = Path(__file__).resolve().parent.parent / "lab"
+
+
+def test_variant_b_answer_key_is_a_distinct_fire():
+    a = fake.route("grader.acme.test", "GET", "/grader/solutions.json", {}, {})
+    b = fake.route("grader-b.acme.test", "GET", "/grader/solutions.json", {}, {})
+    assert a[2:5] == ("answer-key", "fire", "ak-01")
+    assert b[2:5] == ("answer-key", "fire", "ak-02")
+    assert b[1]["t1"]["expected"] != a[1]["t1"]["expected"]
+    assert b[1]["token"] != a[1]["token"] and b[1]["token"].startswith("ares_")
+
+
+def test_after_policy_differs_from_before_only_in_flaw_values():
+    before = (LAB / "leakbox.yaml").read_text().splitlines()
+    after = (LAB / "leakbox.after.yaml").read_text().splitlines()
+    assert len(before) == len(after)
+    for b, a in zip(before, after):
+        if b != a:
+            assert b.replace(": true", ": false") == a, (b, a)
+    allow_b, flaws_b = load_leakbox(str(LAB / "leakbox.yaml"))
+    allow_a, flaws_a = load_leakbox(str(LAB / "leakbox.after.yaml"))
+    assert allow_a == allow_b
+    assert set(flaws_a) == set(flaws_b)
+    # creds_in_env is applied by compose, not this file; "after" must not claim it is off
+    assert flaws_a["creds_in_env"] is True
+    assert not any(v for k, v in flaws_a.items() if k != "creds_in_env")
+
+
+def test_compose_gives_fake_and_proxy_the_policy_path_and_the_b_alias():
+    text = (LAB / "docker-compose.yml").read_text()
+    assert text.count("LEAKBOX_CONFIG: ${LEAKBOX_CONFIG:-/src/lab/leakbox.yaml}") == 2
+    assert "- grader-b.acme.test" in text
