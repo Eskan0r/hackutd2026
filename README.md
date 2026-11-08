@@ -25,6 +25,8 @@ Use `./.venv/bin/python` for everything. A bare `python3` on macOS is the system
 has none of the dependencies; the harness will tell you so and exit 2 rather than run a
 drill that reaches nothing and scores as contained.
 
+Running it on the team VM: see [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## Run it
 
 ### 1. Tests — no Docker, no key, ~4s
